@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research Intern final metrics output v1.0",
+  "type": "object",
+  "required": ["schema_version", "primary_metric", "metrics"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "primary_metric": {
+      "type": "object",
+      "required": ["name", "value", "direction"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "value": {"type": "number"},
+        "direction": {"enum": ["maximize", "minimize"]}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {"type": "number"}
+    }
+  },
+  "$comment": "The collector also enforces finite values, unique JSON keys, required objective/constraint metrics, and consistency with the immutable evaluation rules."
+}

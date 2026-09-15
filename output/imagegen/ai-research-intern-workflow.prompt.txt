@@ -1,0 +1,58 @@
+Generation mode: built-in image_gen
+
+Use case: infographic-diagram.
+Create one polished, highly legible illustrated architecture/workflow infographic for a nontechnical audience explaining the planned AI Research Intern project from human setup through repeated experiments to the final result. Portrait poster, generous whitespace, crisp sans-serif typography, large readable labels, consistent simple outline illustrations, restrained teal/violet/blue accents on a warm white background. Friendly professional educational style. The diagram must communicate the workflow in seconds and reward closer reading. This is a planned system, not a claim of implementation.
+
+LAYOUT: One clear numbered vertical workflow down the center, connected by bold downward arrows. Only two small side cards for funding/account connections. A single large loop arrow along the left margin returns from the bottom decision to step 2. No crossing arrows. The final human/result panel is at the bottom. Use icons of a researcher at a laptop, controller/checklist, AI/code, shield/Git snapshot, cloud/GPU, metric gauge, memory/files, and final report. Icons support short text. No code listings, technical module trees, complex swimlanes, or vendor logo imitation.
+
+Exact title: "AI RESEARCH INTERN"
+Exact subtitle: "Planned workflow • One experiment at a time"
+
+Central steps, in this exact order:
+1. "Researcher sets the mission"
+   "Code + data + baseline + evaluator"
+   "Goal + allowed files + budgets"
+   "Connect approved Copilot account and Azure access"
+   Downward arrow label: "Press Start"
+2. "Controller checks the rules"
+   "Check budget • choose the best parent"
+3. "Copilot proposes & edits"
+   "Fresh SDK session • permitted files only"
+4. "Validate & save code"
+   "Check actual changes • protect the evaluator"
+   "Save the candidate as a Git commit"
+   Small label on outgoing arrow: "Only valid candidates run"
+5. "Azure ML runs the experiment"
+   "Copilot session has ended"
+6. "Evaluator measures the result"
+   "Compare metrics • check constraints"
+   Small colored outcome tags: "KEEP" "REJECT" "FAILED" "GOAL REACHED"
+7. "Record & learn"
+   "Save results, code and findings"
+   "Keep successes and failures"
+   "Build memory for the next session"
+
+Below step 7, a simple decision diamond labeled "Continue?"
+Its LEFT branch is labeled "Budget remains + goal unmet" and travels along the far left margin back up into step 2. Label that returning arrow "Next experiment • fresh session".
+Its DOWN branch is labeled "Target reached, limit hit, or user stops" and leads into final panel:
+"Researcher receives the best result found"
+"Best code + baseline comparison + experiment history"
+Show a human and a report with a modest comparison chart, with no invented numeric performance claims.
+
+A violet SIDE CARD beside step 3, connected ONLY to step 3 by a dotted arrow labeled "AI credits":
+"YOUR COPILOT ACCOUNT"
+"Uses your existing Copilot allowance"
+"Shared with everyday coding"
+"Same approved identity"
+This means company-assigned Copilot credits associated with the authenticated user, subject to account policies. Do not show a new purchase, a separate model-provider API subscription, a free-unlimited claim, or guaranteed available balance.
+
+A blue SIDE CARD beside step 5, connected ONLY to step 5 by a dotted arrow labeled "Compute":
+"AZURE COMPUTE BUDGET"
+"Pays for experiment execution"
+"Separate from Copilot credits"
+
+Small but readable footer:
+"Python controls the workflow; VS Code is the development interface."
+"Copilot proposes. The evaluator decides. The controller continues or stops."
+
+Keep all labels accurate and spelled correctly. Make the main flow visually dominant. Avoid decorative clutter and tiny text. Do not imply the app automates the VS Code chat panel. Do not imply Copilot waits through GPU training or decides its own experimental success. Do not imply every run improves. The diagram should feel simple, visual, and clear despite covering the complete lifecycle.

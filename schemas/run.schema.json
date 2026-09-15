@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research Intern run output v1.0",
+  "type": "object",
+  "required": ["schema_version", "status"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "status": {"enum": ["completed", "failed"]},
+    "experiment_id": {"type": "string", "pattern": "^EXP-[0-9]{3,}$"},
+    "parent_experiment": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^EXP-[0-9]{3,}$"}
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "completed"}}},
+      "then": {
+        "required": ["experiment_id", "parent_experiment"],
+        "properties": {"exit_code": {"type": "integer", "const": 0}}
+      }
+    }
+  ]
+}

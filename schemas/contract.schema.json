@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research Intern experiment contract v1.0",
+  "description": "Structural schema. The loader additionally checks finite numbers, path overlap, immutable policy, and repository paths.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "objective", "execution", "outputs", "scope", "budget"],
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*[\\\\:*?\\[\\]\\u0000-\\u001f])[^/]+(?:/[^/]+)*/?$"
+    },
+    "metric": {"type": "string", "minLength": 1, "maxLength": 128},
+    "paths": {
+      "type": "array", "uniqueItems": true,
+      "items": {"$ref": "#/$defs/path"}
+    }
+  },
+  "properties": {
+    "version": {"const": "1.0"},
+    "objective": {
+      "type": "object", "additionalProperties": false,
+      "required": ["metric", "direction"],
+      "properties": {
+        "metric": {"$ref": "#/$defs/metric"},
+        "direction": {"enum": ["maximize", "minimize"]},
+        "target": {"type": "number"}
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["backend", "job_config"],
+      "properties": {
+        "backend": {"const": "azure_ml"},
+        "job_config": {"$ref": "#/$defs/path"}
+      }
+    },
+    "outputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["root"],
+      "properties": {
+        "root": {"$ref": "#/$defs/path"},
+        "run": {"$ref": "#/$defs/path", "default": "run.json"},
+        "metrics": {"$ref": "#/$defs/path", "default": "metrics.json"},
+        "history": {"$ref": "#/$defs/path", "default": "metrics_history.json"},
+        "logs": {"$ref": "#/$defs/path", "default": "logs/"},
+        "artifacts": {"$ref": "#/$defs/path", "default": "artifacts/"}
+      }
+    },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["editable", "protected"],
+      "properties": {
+        "editable": {"$ref": "#/$defs/paths", "minItems": 1},
+        "protected": {"$ref": "#/$defs/paths"}
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/metric"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "minProperties": 1,
+        "properties": {"min": {"type": "number"}, "max": {"type": "number"}}
+      }
+    },
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_experiments"],
+      "properties": {
+        "max_experiments": {"type": "integer", "minimum": 0},
+        "max_gpu_hours": {"type": "number", "minimum": 0},
+        "max_ai_credits": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

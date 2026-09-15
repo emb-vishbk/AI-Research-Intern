@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Research Intern · Mission control</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to research workspace</a>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-icon" aria-hidden="true">ri</span><span>Research Intern<small>LOCAL MISSION CONTROL</small></span></a>
+    <div class="side-heading">WORKSPACE <span class="local-dot">Local</span></div>
+    <section class="project-card" aria-labelledby="project-title">
+      <h2 id="project-title">Your research repository</h2>
+      <span class="pill" id="project-state">Checking location</span>
+      <p id="project-message">Reading the configured research directory…</p>
+      <code id="project-path">.runtime/research-project/repository/</code>
+      <button id="check-project" class="text-button">Check directory again</button>
+    </section>
+    <div class="side-heading">OFFLINE RUNS <button class="text-button" id="refresh-runs" aria-label="Refresh run list">Refresh</button></div>
+    <nav id="run-list" aria-label="Research runs"><p class="muted">Loading runs…</p></nav>
+    <button class="new-run primary" id="new-run">+ New offline run</button>
+    <div class="side-footer"><span class="local-dot">No service sign-in needed</span><p>Mock code edits · synthetic metrics<br>Copilot and Azure connections come later.</p></div>
+  </aside>
+  <main id="main">
+    <header class="topbar"><span>Research workspace <span class="slash">/</span> Overview</span><span id="connection" role="status">Connecting…</span></header>
+    <div id="error" class="notice error" role="alert" hidden></div>
+    <section class="page-heading"><div><p class="eyebrow">OBSERVE. EXPERIMENT. LEARN.</p><h1>Research mission control</h1><p class="subtitle">Follow each hypothesis from a code change to an evaluated result.</p></div><span class="mode-tag">OFFLINE SIMULATION</span></section>
+    <section id="empty" class="panel empty" hidden><span class="empty-mark" aria-hidden="true">↗</span><h2>Your next experiment starts here.</h2><p>Create an offline run to explore candidate changes, evaluation, budgets, and recovery while your ML repository is being prepared.</p><button id="first-run" class="primary">Create an offline run</button><p class="muted">Real Git history and ledger records. Simulated research results.</p></section>
+    <div id="workspace" hidden>
+      <section class="run-header panel">
+        <div><p class="eyebrow" id="run-label">CURRENT RUN</p><h2 id="objective">Research objective</h2><p class="muted" id="objective-detail"></p></div>
+        <div class="run-actions"><span id="status" class="pill">Ready</span><button id="resume" class="primary">Start run</button><button id="stop" class="secondary">Stop run</button></div>
+        <p class="run-message" id="run-message" role="status"></p>
+      </section>
+      <section class="stats" aria-label="Run summary">
+        <article class="panel stat"><span>Baseline score</span><strong id="baseline">—</strong><small>EXP-000 · researcher starting point</small></article>
+        <article class="panel stat best"><span>Best score</span><strong id="best">—</strong><small id="best-label">—</small></article>
+        <article class="panel stat"><span>Experiment budget</span><strong id="budget">—</strong><small id="attempts">—</small></article>
+        <article class="panel stat"><span>Latest experiment</span><strong class="id-value" id="latest">—</strong><small id="latest-label">—</small></article>
+      </section>
+      <div class="overview-grid">
+        <section class="panel chart-panel"><div class="section-title"><h2>Objective progress</h2><span class="muted" id="chart-metric"></span></div><div id="chart" role="img" aria-label="Recorded objective scores over experiments"></div><p class="chart-caption"><span class="legend-dot"></span>Recorded score <span class="legend-target"></span>Target · failed runs have no score</p></section>
+        <section class="panel hypothesis"><p class="eyebrow">LATEST CANDIDATE PLAN</p><h2 id="hypothesis">Waiting for a candidate</h2><p id="intervention" class="muted">The controller will select a parent from recorded evidence.</p><div class="hypothesis-footer"><span id="preparation-stage">No preparation yet</span><span id="selected-parent">Parent: EXP-000</span></div></section>
+      </div>
+      <section class="panel history"><div class="section-title"><h2>Experiment history</h2><span class="muted">Select an experiment to inspect its evidence</span></div><div class="table-scroll"><table><thead><tr><th scope="col">Experiment</th><th scope="col">Parent</th><th scope="col">Score</th><th scope="col">Decision / state</th><th scope="col">Commit</th></tr></thead><tbody id="experiments"></tbody></table></div></section>
+      <div class="evidence-grid">
+        <section class="panel detail"><div class="section-title"><h2 id="detail-title">Experiment evidence</h2><span class="pill" id="detail-decision">—</span></div><div id="detail-content"><p class="muted">Select an experiment above.</p></div></section>
+        <section class="panel activity"><div class="section-title"><h2>Activity</h2><span class="muted">Persisted events</span></div><ol id="events"></ol><div id="failures"></div></section>
+      </div>
+      <footer class="workspace-footer"><p>Synthetic scores demonstrate the controller. They do not measure your ML project's performance.</p><p id="run-path"></p></footer>
+    </div>
+  </main>
+  <dialog id="create-dialog" aria-labelledby="create-title"><form id="create-form"><div class="section-title"><h2 id="create-title">New offline run</h2><button type="button" id="close-dialog" class="icon-button" aria-label="Close dialog">×</button></div><p class="muted">A dedicated Git fixture and ledger will record every step. These controls use scripted candidates and synthetic outputs.</p><label for="scenario">Scenario</label><select id="scenario" name="scenario"><option value="mixed">Research journey — improve, regress, fail, reach goal</option><option value="goal">Reach the target</option><option value="invalid-first">Recover from an invalid candidate</option><option value="protected-first">Reject a protected file edit, then recover</option><option value="runtime-failure">Record an execution failure</option><option value="invalid-always">Exhaust the preparation budget</option></select><div class="form-grid"><div><label for="max-experiments">Experiment limit</label><input id="max-experiments" type="number" min="0" max="50" step="1" value="4" required></div><div><label for="max-attempts">Preparation limit</label><input id="max-attempts" type="number" min="0" max="100" step="1" placeholder="2 × experiment limit"></div></div><p class="muted">Limits are fixed when the run is created. EXP-000 does not consume an experiment slot. A human stop is permanent for that run.</p><p id="create-error" class="error-text" role="alert"></p><button class="primary" id="create-submit" type="submit">Create &amp; start run</button></form></dialog>
+</body>
+</html>

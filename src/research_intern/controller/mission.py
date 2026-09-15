@@ -1,0 +1,204 @@
+"""Local mission control services; HTTP and browser concerns live elsewhere."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+import sqlite3
+import threading
+from dataclasses import asdict
+from pathlib import Path
+
+from research_intern.contracts.loader import load_contract
+from research_intern.controller.loop import describe_run
+from research_intern.domain.experiments import SliceError
+from research_intern.execution.outputs import read_json
+from research_intern.ledger.preparations import PreparationJournal
+from research_intern.ledger.sqlite import Ledger
+from research_intern.offline import compose_loop, initialize_run
+from research_intern.workspace.paths import child_path
+
+log = logging.getLogger(__name__)
+RUN_ID = re.compile(r"loop-[A-Za-z0-9_-]{1,64}\Z")
+
+
+class MissionBusy(SliceError):
+    """An operation conflicts with the server's serial driver."""
+
+
+class RunNotFound(SliceError):
+    """The requested run or experiment is absent."""
+
+
+class MissionControl:
+    """One background thread drives the existing loop with its own SQLite connection.
+
+    Request reads open independent connections. The loop's OS lock remains the
+    authority for ownership of each run, including when using the CLI separately.
+    """
+
+    def __init__(self, workspace: Path, *, poll_interval: float = 0.5):
+        self.workspace = workspace.resolve(strict=True)
+        self.poll_interval = poll_interval
+        self._guard = threading.Lock()
+        self._active: str | None = None
+        self._creating = False
+        self._closing = False
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task | None = None
+        self._errors: dict[str, str] = {}
+
+    def activity(self) -> dict:
+        with self._guard:
+            return {"active_run_id": self._active, "creating": self._creating}
+
+    def directory(self, run_id: str) -> Path:
+        if not RUN_ID.fullmatch(run_id):
+            raise RunNotFound("Unknown offline run")
+        root = child_path(self.workspace, ".runtime", "simulations", run_id)
+        if not root.is_dir() or not child_path(root, "ledger.sqlite3").is_file():
+            raise RunNotFound("Unknown offline run")
+        return root
+
+    def project(self) -> dict:
+        """Inspect the fixed handoff location without executing researcher code."""
+        relative = ".runtime/research-project/repository"
+        result = {"path": str(self.workspace / relative), "relative_path": relative,
+                  "status": "missing", "execution_available": False,
+                  "message": "Place a copy of your independent research repository here when it is ready."}
+        try:
+            root = child_path(self.workspace, relative)
+            if not root.exists():
+                return result
+            contract = load_contract(root)
+            result.update(status="contract_valid", objective=asdict(contract.rules),
+                          message="Contract parsed. Measured baseline import and live execution are still pending.")
+        except (SliceError, OSError, ValueError) as exc:
+            result.update(status="needs_attention", message=str(exc))
+        return result
+
+    def create(self, *, max_experiments: int = 4, max_attempts: int | None = None,
+               scenario: str = "mixed") -> dict:
+        with self._guard:
+            if self._active or self._creating or self._closing:
+                raise MissionBusy("Wait for the active operation before creating another run")
+            self._creating = True
+        try:
+            root = initialize_run(self.workspace, max_experiments=max_experiments,
+                                  max_attempts=max_attempts, scenario=scenario)
+            return self.status(root.name)
+        finally:
+            with self._guard:
+                self._creating = False
+
+    def runs(self) -> dict:
+        root = child_path(self.workspace, ".runtime", "simulations")
+        directories = sorted((p for p in root.iterdir() if RUN_ID.fullmatch(p.name)),
+                             key=lambda p: p.lstat().st_mtime, reverse=True) if root.exists() else []
+        rows = []
+        for directory in directories[:50]:
+            try:
+                status = self.status(directory.name)
+                rows.append({key: status[key] for key in ("id", "controller", "research_state", "driver")})
+            except (SliceError, OSError, ValueError, sqlite3.Error) as exc:
+                rows.append({"id": directory.name, "error": str(exc)})
+        return {**self.activity(), "runs": rows, "truncated": len(directories) > 50}
+
+    def status(self, run_id: str) -> dict:
+        with Ledger.reopen(self.directory(run_id)) as ledger:
+            result = describe_run(ledger)
+            records = ledger.history()
+            # Diffs and full metrics belong in the selected experiment detail.
+            experiments = []
+            for record in records:
+                experiments.append({"experiment_id": record.experiment_id,
+                                    "parent_experiment": record.parent_experiment,
+                                    "state": record.state, "decision": record.decision,
+                                    "score": record.evaluation.score if record.evaluation else None,
+                                    "git_commit": record.git_commit})
+            journal = PreparationJournal(ledger)
+            latest = journal.latest()
+            result.update(id=run_id, experiments=experiments, events=ledger.recent_events(),
+                          policy=journal.policy(), preparation_failures=journal.failures(),
+                          current_plan=latest.checkpoint.get("plan") if latest else None)
+        with self._guard:
+            result["driver"] = {"active": self._active == run_id, "active_run_id": self._active,
+                                "error": self._errors.get(run_id)}
+        return result
+
+    def experiment(self, run_id: str, experiment_id: str) -> dict:
+        with Ledger.reopen(self.directory(run_id)) as ledger:
+            record = next((r for r in ledger.history() if r.experiment_id == experiment_id), None)
+            if record is None:
+                raise RunNotFound("Unknown experiment")
+            result = asdict(record)
+            # Candidate evidence is published after the ledger reservation. A
+            # crash in that gap leaves a valid record; resume republishes it.
+            evidence = child_path(ledger.root, "experiments", experiment_id, "candidate.json")
+            result["candidate"] = read_json(evidence) if evidence.is_file() else None
+            return result
+
+    def start(self, run_id: str) -> dict:
+        self.status(run_id)  # Validate before scheduling any work.
+        with self._guard:
+            if self._active or self._creating or self._closing:
+                raise MissionBusy("One offline run can be driven at a time")
+            self._active = run_id
+            self._errors.pop(run_id, None)
+            self._thread = threading.Thread(target=self._drive, args=(run_id,),
+                                            name=f"research-{run_id}", daemon=False)
+            try:
+                self._thread.start()
+            except RuntimeError:
+                self._active = None
+                raise
+        return {"id": run_id, "accepted": True}
+
+    def stop(self, run_id: str) -> dict:
+        with Ledger.reopen(self.directory(run_id)) as ledger:
+            describe_run(ledger)
+            ledger.request_stop()
+        return self.status(run_id)
+
+    def _drive(self, run_id: str) -> None:
+        async def drive() -> None:
+            with self._guard:
+                self._loop = asyncio.get_running_loop()
+                self._task = asyncio.current_task()
+                if self._closing:
+                    return
+            with Ledger.reopen(self.directory(run_id)) as ledger:
+                await compose_loop(ledger, emit=log.info).run(poll_interval=self.poll_interval)
+
+        try:
+            asyncio.run(drive())
+        except asyncio.CancelledError:
+            pass  # ResearchLoop persisted INTERRUPTED; shutdown is not human stop.
+        except Exception as exc:
+            log.exception("Offline driver failed for %s", run_id)
+            with self._guard:
+                self._errors[run_id] = str(exc) or type(exc).__name__
+        finally:
+            with self._guard:
+                self._active = None
+                self._loop = None
+                self._task = None
+
+    def close(self) -> None:
+        with self._guard:
+            self._closing = True
+            thread = self._thread
+            if self._loop is not None and self._task is not None:
+                try:
+                    self._loop.call_soon_threadsafe(self._task.cancel)
+                except RuntimeError:
+                    # asyncio.run may have closed its loop just before the
+                    # thread acquires this guard to publish its final state.
+                    if not self._loop.is_closed():
+                        raise
+        if thread is not None:
+            thread.join(timeout=35)
+            if thread.is_alive():
+                raise MissionBusy("The offline driver is still shutting down; inspect the server log")

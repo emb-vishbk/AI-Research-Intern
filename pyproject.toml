@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-research-intern"
+version = "0.1.0"
+description = "AI Research Intern: controlled Copilot integration and deterministic experiments"
+requires-python = ">=3.11"
+dependencies = ["github-copilot-sdk==1.0.13", "PyYAML>=6.0.1,<7"]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+web-test = ["httpx>=0.27,<1"]
+
+[project.scripts]
+research-intern = "research_intern.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"research_intern.api" = ["static/*.html", "static/*.css", "static/*.js"]
+ 
