@@ -1,8 +1,73 @@
 # AI Research Intern — Current State and Session Handoff
 
-Updated: 2026-09-15
+Updated: 2026-09-17
 
 This file summarizes implementation progress and decisions for a new coding session. It is a handoff snapshot, not a replacement for the authoritative project documentation. Inspect the repository before continuing; this snapshot can become stale.
+
+## Latest implementation update (2026-09-17)
+
+The user authorized implementation and offline tests, with human-led Copilot
+authentication and Azure setup. The uploaded Penn-Fudan source already exists at
+`.runtime/research-project/repository`; upload is not pending. Its historical audit
+explicitly rejects the old Azure output as accepted EXP-000: no exact submitted
+commit, changed source, scientific approval/limits pending and no independent score
+recomputation. Preserve source and archived evidence; do not relabel or freeze them.
+
+Added `copilot/files.py`, `copilot/live.py`, `execution/azure.py`,
+`ledger/services.py` and `controller/readiness.py`. These provide restricted fresh
+coding turns, exact-source Azure staging, durable submission/turn reservations,
+ambiguous-submission reconciliation and explicit dashboard readiness checks.
+The optional `azure` dependency group is declared but not installed in this pass.
+**Live adapters are not wired into the existing simulation-only ledger/loop.**
+Baseline acceptance, trusted scoring, real controller/UI composition, provider
+billing enforcement and the measured autonomous demonstration remain unfinished.
+
+The selected Windows `.venv` lacked declared YAML/web-test dependencies; these were
+installed locally to run tests. No runtime/browser download, service sign-in,
+Copilot call, Azure job, source-workload change or application Git commit occurred.
+Verification also exposed Windows Git path/newline handling and test connection
+cleanup issues; these were corrected without relaxing protected-path checks.
+See the README's live integration status for human setup and acceptance gates.
+
+## Prior local-setup snapshot (superseded where noted above)
+
+The researcher has explicitly said the optimization metric and evaluation protocol
+are **still undecided**. They will upload the repository and review the metric with
+the coding agent afterward. Older mAP/model/dataset choices below are historical
+proposals, not authority to configure an active experiment. Copilot integration is
+also deferred pending a later decision. Do not request new service sign-ins or
+invoke Copilot/Azure as part of this local setup work.
+
+Source upload now accepts a source-only folder even without a contract, for review.
+A supplied contract must validate. `POST /api/project/prepare` stages an independent
+Git repository, checks all source without executing it, and records its source commit,
+contract and file inventory in `workspace.json`. It preserves source bytes and never
+adopts uploaded Git metadata, force-adds ignored content or resets unexpected work.
+Interrupted Git publication and later source drift require inspection.
+
+The optional contract `evaluation` section pins the evaluator entrypoint and fixed
+split manifest using SHA-256 and records the metric definition, dataset version and
+procedure. Those paths are automatically protected. The UI displays the complete
+policy and offers explicit confirmation against the source commit, contract digest
+and evaluation fingerprint. The existing output collector rejects missing/mismatched
+fingerprints before deterministic scoring when a protocol is configured. This is a
+consistency gate, not proof of actual trusted workload execution.
+
+No measured baseline is created by preparation. Live Start, service adapters and
+compute/credit enforcement remain unavailable. Draft budget controls are labelled
+accordingly. No new dependency or provider-specific research implementation was added.
+See `README.md` for the local UI workflow and `Docs/EXPERIMENT_CONTRACT.md` for fields.
+
+Validation on 2026-09-17: all 166 offline slice tests passed across split runs (the
+first long run reached its command time limit after 127 passing checks; the remaining
+39 completed successfully). Coverage includes real local Git preparation, unchanged
+source, ignored/private files, protected evaluation inputs, explicit confirmation,
+controller reuse, output fingerprint rejection, restart/stop behavior, upload/API
+boundaries and a real loopback HTTP/SSE server. JSON schemas and JavaScript syntax
+were checked. The Linux web environment lacks the Copilot SDK, so SDK-only tests
+were excluded; no new package, browser or runtime was downloaded. Browser rendering
+remains unverified because the earlier browser download was declined. No service
+sign-in, live agent/cloud call, real ML execution or application Git commit occurred.
 
 ## 1. Workspace and project objective
 
@@ -67,7 +132,7 @@ Some initial-project-state statements in `AGENTS.md` predate the implementation.
 | Basic recovery | SQLite preparation journal, atomic reservation linkage, process lock, archived failed edits, validated commit recovery, and reuse of pending experiment/job IDs. CLI resumes initialized offline runs and refuses to erase unknown/newer work. |
 | Portable researcher guide | `RESEARCH_INTERN_REQUIREMENTS.md` can be copied alone into an independent ML repository. It covers standalone operation, task-agnostic contract/output requirements, protected evaluation, provenance, baseline handoff, proposed CLI/Azure bindings, and current platform limitations. |
 | Localhost API and browser | Thin FastAPI transport, one serial background offline driver, server-sent snapshots, run controls, objectives/budgets, experiment history and detailed evidence. Plain locally served HTML/CSS/JavaScript; no Node build or browser sign-in. |
-| Fixed research directory | `.runtime/research-project/repository/` is the agreed place for a copy of the independent ML repository. The browser checks its contract, scope paths and job YAML. Real staging, measured baseline import and actual ML execution are still pending. |
+| Fixed research directory | `.runtime/research-project/repository/` is the agreed place for a copy of the independent ML repository. The browser checks its contract, scope paths and job YAML; explicit local preparation now creates its controlled Git workspace. Measured baseline import and actual ML execution remain pending. |
 
 Main module boundaries:
 
@@ -251,11 +316,10 @@ operator helper and a completed real Azure baseline with resumable output collec
 and verified downloads. A YAML template alone is an intermediate milestone. The
 guide stays task agnostic, and the experiment must also run without the platform.
 
-The next useful milestone is a prepared Penn-Fudan pedestrian bounding-box
-experiment using TorchVision Faster R-CNN and validation mAP@0.50:0.95, as locked
-in section 8. Finalize the exact model variant/initialization, data split, permitted
-interventions and resource limits, then measure the baseline before choosing a
-numerical improvement target. Keep this workload separate from the platform.
+The next useful milestone is to inspect the researcher's uploaded source and agree
+on the objective, metric scale, evaluator, immutable data/split, allowed interventions
+and resource limits. Section 8 records earlier workload proposals only; the user
+has reopened the metric decision. Keep the workload separate from the platform.
 Data/model acquisition and measured training have not been performed here.
 
 The localhost API/browser now exposes the offline loop. Start it from this
@@ -265,24 +329,26 @@ workspace using:
 PYTHONPATH=src .runtime/web-venv/bin/python -B -m research_intern.main serve
 ```
 
-Open `http://127.0.0.1:8000`. Create an offline run, choose a bounded scenario,
-and inspect hypothesis/diff/metric evidence. The fixed research source location is
-`.runtime/research-project/repository/`; the user can copy their separately developed
-ML repository there later. The application only checks its contract readiness so
-far. Browser upload/path-picker flows are deferred. The prepared workload, trusted
-evaluator, source staging, and measured baseline handoff still need implementation.
+Open `http://127.0.0.1:8000`. Upload a source-only copy of the independent research
+repository. A valid core contract enables local Git preparation; an explicit pinned
+evaluation protocol enables review/confirmation. The fixed source location remains
+`.runtime/research-project/repository/`. Source setup is not baseline import. The
+browser does not expose developer simulation creation controls; those remain in the
+CLI/API. The prepared workload and measured baseline handoff still require evidence.
 
-Then validate runtime Copilot authentication/editing and one real Azure candidate,
+After the researcher chooses the agent integration, validate editing and one real Azure candidate,
 with compute/AI budget enforcement and live submission reconciliation, before
 running the loop on measured ML experiments. Live integration must replace explicit
 simulated-mode guards and ledger restrictions deliberately; it is not just an adapter swap.
 
-## 8. Locked pedestrian-detection workload and optimization problem
+## 8. Historical pedestrian-detection proposal — not an active objective
 
-The user has locked the following decisions for the independent autolabelling
-workspace, whose screenshot currently shows only `RESEARCH_INTERN_REQUIREMENTS.md`:
+The following records an earlier proposal for the independent autolabelling workspace.
+The latest user instruction explicitly leaves the metric and evaluation protocol
+undecided until repository review. Do not treat this table or the recommendations
+below as approval to configure a real experiment.
 
-| Decision | Locked choice |
+| Decision | Earlier proposal |
 | --- | --- |
 | Dataset | Penn-Fudan Pedestrian |
 | Model family | TorchVision Faster R-CNN |
@@ -293,7 +359,7 @@ workspace, whose screenshot currently shows only `RESEARCH_INTERN_REQUIREMENTS.m
 Use the [official tutorial implementation](https://github.com/pytorch/tutorials/blob/main/intermediate_source/torchvision_tutorial.py)
 as the workload starting point, with the required training/COCO evaluation helpers
 from [pytorch/vision/references/detection](https://github.com/pytorch/vision/tree/main/references/detection).
-Adapt its Faster R-CNN example for the locked bbox task; the tutorial's full training
+If this proposal is approved again, adapt its Faster R-CNN example for the bbox task; the tutorial's full training
 example uses Mask R-CNN. Keep the detector as a TorchVision dependency, pin copied
 source revisions, preserve notices, and add the CLI, fixed policy, standardized exports
 and one-job Azure workflow around the reused code. Keep scoring dependencies protected
@@ -362,7 +428,7 @@ A previous request to run Windows Python outside the sandbox was declined. Do no
 
 Runtime/test paths use `.runtime/`, which is ignored by Git. Fixture Git commands use isolated subprocess settings and do not change machine Git configuration. Workspace path checks are application safeguards, not an OS sandbox; do not promise that these checks alone prevent all filesystem access or network egress.
 
-Runtime Copilot will be invoked through its SDK, not by automating VS Code Chat. The intended approach is to use the user's existing company Copilot entitlement. Authentication, organizational access, and billing applicability remain unverified. A VS Code sign-in alone has not validated the isolated runtime's authentication. Azure compute is a separate resource budget.
+The original design proposed invoking runtime Copilot through its SDK, not by automating VS Code Chat, using the user's existing company entitlement. The current user has deferred this integration decision. Authentication, organizational access, and billing applicability remain unverified. A VS Code sign-in alone has not validated the isolated runtime's authentication. Azure compute is a separate resource budget.
 
 Never put credentials in source, contracts, prompts, research state, ledger records, Git, or chat.
 
@@ -375,7 +441,7 @@ At inspection, the application repository had **no commits on `master`**, and th
 The latest user direction accepted a fixed local research directory as the simplest
 onboarding arrangement while the independent ML repository develops in parallel.
 The platform now has an offline API/browser slice around the existing controller.
-The fixed source check is read-only; live research integration is not enabled.
+Source upload and explicit Git preparation are available; live research integration is not enabled.
 
 After approval, the Python installer and optional web/test packages were downloaded
 into ignored `.runtime/` storage, using an isolated Linux `.runtime/web-venv` with

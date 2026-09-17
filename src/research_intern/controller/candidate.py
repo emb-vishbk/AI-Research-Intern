@@ -161,7 +161,7 @@ class CandidateController:
         candidates.mkdir(exist_ok=True)
         ensure_evidence(child_path(candidates, f"{commit}.json"), evidence)
         diff_path = child_path(attempt, "diff.patch")
-        if diff_path.exists() and diff_path.read_text(encoding="utf-8") != diff:
+        if diff_path.exists() and diff_path.read_bytes() != diff.encode("utf-8"):
             raise WorkspaceError("The preparation's diff evidence changed")
         if not diff_path.exists():
             atomic_bytes(diff_path, diff.encode("utf-8"))

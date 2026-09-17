@@ -11,14 +11,18 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.concurrency import run_in_threadpool
 
+from research_intern.api.uploads import folder_files
 from research_intern.controller.mission import MissionControl, RunNotFound
 from research_intern.domain.experiments import SliceError
-from research_intern.workspace.lock import RunLock
+from research_intern.workspace.lock import RunLock, own_run
 from research_intern.workspace.paths import child_path
+from research_intern.workspace.project import LoopBudget
 
 ASSETS = Path(__file__).parent / "static"
 log = logging.getLogger(__name__)
@@ -29,6 +33,38 @@ class NewRun(BaseModel):
     max_experiments: int = Field(default=4, ge=0, le=50)
     max_attempts: int | None = Field(default=None, ge=0, le=100)
     scenario: Literal["mixed", "goal", "runtime-failure", "invalid-first", "invalid-always", "protected-first"] = "mixed"
+
+
+class BudgetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    max_experiments: int = Field(ge=0, le=50)
+    max_gpu_hours: float = Field(ge=0)
+    max_ai_credits: float = Field(ge=0)
+    contract_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class PrepareProject(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    contract_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ConfirmEvaluation(PrepareProject):
+    source_commit: str = Field(pattern=r"^[a-f0-9]{40}$")
+    evaluation_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    confirmed: Literal[True]
+
+
+async def stream_dashboard(request: Request, mission: MissionControl):
+    previous = None
+    while not await request.is_disconnected():
+        current = await asyncio.to_thread(mission.dashboard)
+        payload = json.dumps(current, allow_nan=False, separators=(",", ":"))
+        if payload != previous:
+            yield f"event: snapshot\ndata: {payload}\n\n"
+            previous = payload
+        else:
+            yield ": keepalive\n\n"
+        await asyncio.sleep(1)
 
 
 async def stream_status(request: Request, mission: MissionControl, run_id: str, initial: dict):
@@ -50,7 +86,8 @@ async def stream_status(request: Request, mission: MissionControl, run_id: str, 
             return
 
 
-def create_app(workspace: Path, *, mission: MissionControl | None = None) -> FastAPI:
+def create_app(workspace: Path, *, mission: MissionControl | None = None,
+               server_lock: RunLock | None = None) -> FastAPI:
     mission = mission or MissionControl(workspace)
 
     @asynccontextmanager
@@ -58,13 +95,13 @@ def create_app(workspace: Path, *, mission: MissionControl | None = None) -> Fas
         server_root = child_path(workspace, ".runtime", "web")
         server_root.mkdir(parents=True, exist_ok=True)
         # One web server owns the serial mission driver for this workspace.
-        with RunLock(server_root):
+        with own_run(server_root, server_lock):
             try:
                 yield
             finally:
                 await asyncio.to_thread(mission.close)
 
-    app = FastAPI(title="AI Research Intern — offline mission control", lifespan=lifespan,
+    app = FastAPI(title="AI Research Intern — local research workspace", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url="/api/openapi.json")
     app.state.mission = mission
 
@@ -94,6 +131,13 @@ def create_app(workspace: Path, *, mission: MissionControl | None = None) -> Fas
     async def boundary_error(request: Request, exc: SliceError):
         return JSONResponse({"detail": str(exc)}, status_code=404 if isinstance(exc, RunNotFound) else 409)
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError):
+        # Do not echo request values; NaN/Infinity cannot be serialized as JSON.
+        messages = [f"{'.'.join(str(part) for part in issue['loc'])}: {issue['msg']}"
+                    for issue in exc.errors()]
+        return JSONResponse({"detail": "; ".join(messages)}, status_code=422)
+
     @app.exception_handler(sqlite3.Error)
     async def storage_error(request: Request, exc: sqlite3.Error):
         log.error("Local run ledger unavailable", exc_info=exc)
@@ -119,6 +163,39 @@ def create_app(workspace: Path, *, mission: MissionControl | None = None) -> Fas
     @app.get("/api/project")
     async def project():
         return await asyncio.to_thread(mission.project)
+
+    @app.post("/api/project/upload", status_code=201)
+    async def upload_project(request: Request):
+        with mission.project_operation():
+            async with folder_files(request) as files:
+                return await run_in_threadpool(mission.projects.import_folder, files)
+
+    @app.post("/api/project/budget")
+    async def save_budget(body: BudgetSettings):
+        budget = LoopBudget(body.max_experiments, body.max_gpu_hours, body.max_ai_credits)
+        return await run_in_threadpool(mission.save_budget, budget, body.contract_sha256)
+
+    @app.post("/api/project/start")
+    async def start_project():
+        return await run_in_threadpool(mission.start_project)
+
+    @app.post("/api/project/prepare")
+    async def prepare_project(body: PrepareProject):
+        return await run_in_threadpool(mission.prepare_project, body.contract_sha256)
+
+    @app.post("/api/project/evaluation/confirm")
+    async def confirm_evaluation(body: ConfirmEvaluation):
+        return await run_in_threadpool(mission.confirm_evaluation, body.contract_sha256,
+                                       body.source_commit, body.evaluation_fingerprint)
+
+    @app.get("/api/workspace")
+    async def workspace_status():
+        return await asyncio.to_thread(mission.dashboard)
+
+    @app.get("/api/workspace/events")
+    async def workspace_events(request: Request):
+        return StreamingResponse(stream_dashboard(request, mission), media_type="text/event-stream",
+                                 headers={"X-Accel-Buffering": "no"})
 
     @app.get("/api/runs")
     async def runs():

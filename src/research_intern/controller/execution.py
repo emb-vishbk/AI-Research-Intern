@@ -15,9 +15,14 @@ class ExecutionController:
         self.ledger = ledger
         self.executor = executor
 
+    @property
+    def evaluation_fingerprint(self) -> str | None:
+        return self.ledger.contract.evaluation_fingerprint if self.ledger.contract else None
+
     def import_baseline(self, git_commit: str) -> ExperimentRecord:
         request = JobRequest("EXP-000", None, git_commit)
-        result = collect_outputs(self.ledger.outputs("EXP-000"), self.ledger.rules, request, self.ledger.output_paths)
+        result = collect_outputs(self.ledger.outputs("EXP-000"), self.ledger.rules, request, self.ledger.output_paths,
+                                 evaluation_fingerprint=self.evaluation_fingerprint)
         evaluation = evaluate_baseline(self.ledger.rules, result)
         return self.ledger.import_baseline(git_commit, result, evaluation)
 
@@ -77,7 +82,8 @@ class ExecutionController:
             return self.ledger.record_failure(experiment_id, "EXECUTION_FAILED", f"Job {status}")
         request = JobRequest(record.experiment_id, record.parent_experiment, record.git_commit)
         try:
-            result = collect_outputs(outputs, self.ledger.rules, request, self.ledger.output_paths)
+            result = collect_outputs(outputs, self.ledger.rules, request, self.ledger.output_paths,
+                                     evaluation_fingerprint=self.evaluation_fingerprint)
         except RunFailedError as exc:
             return self.ledger.record_failure(experiment_id, "EXECUTION_FAILED", str(exc))
         except OutputError as exc:

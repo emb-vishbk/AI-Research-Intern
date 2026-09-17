@@ -71,7 +71,7 @@ def validate_tree(root: Path) -> None:
 
 
 def collect_outputs(root: Path, rules: EvaluationRules, request: JobRequest,
-                    paths: OutputPaths = OutputPaths()) -> CollectedResult:
+                    paths: OutputPaths = OutputPaths(), *, evaluation_fingerprint: str | None = None) -> CollectedResult:
     validate_tree(root)
     run = read_json(root / paths.run)
     if run.get("schema_version") != "1.0":
@@ -87,6 +87,8 @@ def collect_outputs(root: Path, rules: EvaluationRules, request: JobRequest,
         raise OutputError("run.json status must be completed or failed")
     if "experiment_id" not in run or "parent_experiment" not in run:
         raise OutputError("Completed run.json must identify the experiment and its parent")
+    if evaluation_fingerprint is not None and run.get("evaluation_fingerprint") != evaluation_fingerprint:
+        raise OutputError("run.json evaluation_fingerprint does not match the fixed evaluation protocol")
     if "exit_code" in run and (type(run["exit_code"]) is not int or run["exit_code"] != 0):
         raise OutputError("A completed run cannot report an unsuccessful exit_code")
     for directory in (paths.logs, paths.artifacts):

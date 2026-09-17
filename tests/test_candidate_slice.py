@@ -117,7 +117,7 @@ class ContractLoadingTests(WorkspaceTest):
         path.unlink()
         target = self.root / "other.yaml"
         target.write_text("a: 1", encoding="utf-8")
-        path.symlink_to(target)
+        self.create_symlink(path, target)
         with self.assertRaises(ContractError):
             read_yaml(path)
 
@@ -281,11 +281,11 @@ class CandidateIntegrationTests(CandidateFixture):
 
     def test_symlink_and_hardlink_changes_are_rejected(self):
         link = self.repository / "configs" / "linked.py"
-        for make_link in (lambda: link.symlink_to(self.repository / "evaluate.py"),
-                          lambda: os.link(self.repository / "evaluate.py", link)):
+        for make_link in (lambda: os.link(self.repository / "evaluate.py", link),
+                  lambda: self.create_symlink(link, self.repository / "evaluate.py")):
             with self.subTest(link=make_link), self.assertRaises(WorkspaceError):
                 self.prepare(lambda: MutationProposer(lambda c, p: make_link()))
-            link.unlink()
+            link.unlink(missing_ok=True)
         self.assert_unreserved()
 
     def test_preflight_catches_invalid_python_without_executing_code(self):

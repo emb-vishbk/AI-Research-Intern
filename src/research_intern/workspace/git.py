@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -103,13 +104,52 @@ def verify_versionable_directories(files: dict[str, Entry]) -> None:
 
 
 class GitWorkspace:
-    def __init__(self, run_root: Path, repository: Path):
+    @staticmethod
+    def _locations(run_root: Path, repository: Path) -> tuple[Path, Path]:
         try:
             runtime = child_path(PLATFORM_ROOT, ".runtime")
-            self.run_root = child_path(runtime, run_root.absolute().relative_to(runtime).as_posix())
-            self.repository = child_path(self.run_root, repository.absolute().relative_to(self.run_root).as_posix())
+            checked_root = child_path(runtime, run_root.absolute().relative_to(runtime).as_posix())
+            checked_repository = child_path(checked_root, repository.absolute().relative_to(checked_root).as_posix())
         except (ValueError, SliceError) as exc:
             raise WorkspaceError("Use a dedicated experiment repository inside a run under .runtime/") from exc
+        return checked_root, checked_repository
+
+    @classmethod
+    def initialize(cls, run_root: Path, repository: Path) -> GitWorkspace:
+        """Initialize only a new owned repository, with no user config or templates."""
+        run_root, repository = cls._locations(run_root, repository)
+        if child_path(repository, ".git").exists():
+            raise WorkspaceError("Existing Git metadata cannot be adopted or overwritten during import")
+        files = snapshot_tree(repository, omit_git=True)
+        verify_versionable_directories(files)
+        if any(part.casefold() in (".gitattributes", ".gitmodules") for name in files for part in name.split("/")):
+            raise WorkspaceError("Prepared repositories cannot use Git attributes or submodules")
+        executable = shutil.which("git")
+        if executable is None:
+            raise WorkspaceError("Workspace preparation needs an already installed Git executable")
+        environment = {key: value for key, value in os.environ.items()
+                       if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"}}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+        with tempfile.TemporaryDirectory(dir=run_root, prefix="empty-template-") as template:
+            try:
+                subprocess.run([executable, "init", "--initial-branch=main", "--object-format=sha1",
+                                f"--template={template}"], cwd=repository, env=environment,
+                               check=True, capture_output=True, timeout=20)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise WorkspaceError("Cannot initialize the dedicated source repository") from exc
+        workspace = cls(run_root, repository)
+        workspace._git("add", "--all", "--", ".")
+        expected = {name: entry.digest for name, entry in files.items() if entry.kind == "file"}
+        if workspace.staged_files() != expected:
+            raise WorkspaceError("Source contains ignored files. Remove generated/private files from the uploaded copy; nothing was force-added")
+        workspace._git("-c", "user.name=Research Intern", "-c", "user.email=local@research-intern.invalid",
+                       "commit", "-m", "Imported researcher source; setup only, not EXP-000")
+        workspace._git("update-ref", "refs/research-intern/import", workspace.head)
+        workspace.verify_clean()
+        return workspace
+
+    def __init__(self, run_root: Path, repository: Path):
+        self.run_root, self.repository = self._locations(run_root, repository)
         self.git_directory = child_path(self.repository, ".git")
         if not self.git_directory.is_dir():
             raise WorkspaceError("An independent .git directory is required; linked worktrees are unsupported")
@@ -158,7 +198,7 @@ class GitWorkspace:
         for name in ("objects/info/alternates", "objects/info/http-alternates", "info/grafts", "shallow"):
             if (self.git_directory / name).exists():
                 raise WorkspaceError("Shared objects and rewritten/shallow history are unsupported")
-        if self._git("rev-parse", "--show-toplevel").decode().strip() != str(self.repository):
+        if Path(self._git("rev-parse", "--show-toplevel").decode().strip()).resolve() != self.repository:
             raise WorkspaceError("Git resolved a different repository")
         if self._git("rev-parse", "--show-object-format").strip() != b"sha1":
             raise WorkspaceError("The prepared offline workflow currently requires SHA-1 Git repositories")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import yaml
@@ -53,4 +54,11 @@ def load_contract(repository: Path) -> ExperimentContract:
         raise ContractError("The Azure job configuration must be a YAML object")
     # Full Azure service validation belongs to the future live executor.
     child_path(repository, contract.outputs.root)
+    if contract.evaluation is not None:
+        for name in ("evaluator", "validation_split"):
+            path = child_path(repository, getattr(contract.evaluation, name))
+            if not path.is_file() or path.stat().st_nlink != 1 or path.stat().st_size > 16 * 1024 * 1024:
+                raise ContractError(f"Evaluation {name} must be a regular, unlinked file up to 16 MiB")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != getattr(contract.evaluation, name + "_sha256"):
+                raise ContractError(f"Evaluation {name} does not match its pinned SHA-256 digest")
     return contract

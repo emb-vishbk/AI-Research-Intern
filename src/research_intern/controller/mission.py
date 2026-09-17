@@ -7,17 +7,19 @@ import logging
 import re
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from research_intern.contracts.loader import load_contract
 from research_intern.controller.loop import describe_run
+from research_intern.controller.readiness import project_readiness
 from research_intern.domain.experiments import SliceError
 from research_intern.execution.outputs import read_json
 from research_intern.ledger.preparations import PreparationJournal
 from research_intern.ledger.sqlite import Ledger
 from research_intern.offline import compose_loop, initialize_run
 from research_intern.workspace.paths import child_path
+from research_intern.workspace.project import LoopBudget, ProjectStore
 
 log = logging.getLogger(__name__)
 RUN_ID = re.compile(r"loop-[A-Za-z0-9_-]{1,64}\Z")
@@ -44,11 +46,13 @@ class MissionControl:
         self._guard = threading.Lock()
         self._active: str | None = None
         self._creating = False
+        self._project_busy = False
         self._closing = False
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._errors: dict[str, str] = {}
+        self.projects = ProjectStore(self.workspace)
 
     def activity(self) -> dict:
         with self._guard:
@@ -63,26 +67,64 @@ class MissionControl:
         return root
 
     def project(self) -> dict:
-        """Inspect the fixed handoff location without executing researcher code."""
-        relative = ".runtime/research-project/repository"
-        result = {"path": str(self.workspace / relative), "relative_path": relative,
-                  "status": "missing", "execution_available": False,
-                  "message": "Place a copy of your independent research repository here when it is ready."}
+        return self.projects.inspect()
+
+    @contextmanager
+    def project_operation(self):
+        """Keep uploads/settings and the serial controller mutually exclusive."""
+        with self._guard:
+            if self._active or self._creating or self._closing or self._project_busy:
+                raise MissionBusy("Wait for the current operation to finish before changing the project")
+            self._project_busy = True
         try:
-            root = child_path(self.workspace, relative)
-            if not root.exists():
-                return result
-            contract = load_contract(root)
-            result.update(status="contract_valid", objective=asdict(contract.rules),
-                          message="Contract parsed. Measured baseline import and live execution are still pending.")
-        except (SliceError, OSError, ValueError) as exc:
-            result.update(status="needs_attention", message=str(exc))
-        return result
+            yield
+        finally:
+            with self._guard:
+                self._project_busy = False
+
+    def save_budget(self, budget: LoopBudget, contract_sha256: str) -> dict:
+        with self.project_operation():
+            return self.projects.save_budget(budget, contract_sha256)
+
+    def prepare_project(self, contract_sha256: str) -> dict:
+        with self.project_operation():
+            return self.projects.prepare(contract_sha256)
+
+    def confirm_evaluation(self, contract_sha256: str, source_commit: str, evaluation_fingerprint: str) -> dict:
+        with self.project_operation():
+            return self.projects.confirm_evaluation(contract_sha256, source_commit, evaluation_fingerprint)
+
+    def dashboard(self) -> dict:
+        """One workspace view; old simulated evidence never becomes a real baseline."""
+        project = self.project()
+        with self._guard:
+            active, changing = self._active, self._project_busy or self._creating
+        run = None
+        history_error = None
+        try:
+            if active:
+                run = self.status(active)
+            elif project["status"] == "missing":
+                root = child_path(self.workspace, ".runtime", "simulations")
+                directories = sorted((p for p in root.iterdir() if RUN_ID.fullmatch(p.name)),
+                                     key=lambda p: p.lstat().st_mtime, reverse=True) if root.exists() else []
+                if directories:
+                    run = self.status(directories[0].name)
+        except (SliceError, OSError, ValueError, sqlite3.Error) as exc:
+            history_error = str(exc)
+        readiness = project_readiness(project)
+        return {"project": project, "run": run, "changing": changing, "history_error": history_error,
+            "can_start": readiness["can_start"], "readiness": readiness,
+            "start_blocker": "Live research is blocked: " + " ".join(item["message"] for item in readiness["blockers"])}
+
+    def start_project(self) -> None:
+        # An upload or saved budget must never silently start a synthetic substitute.
+        raise MissionBusy(self.dashboard()["start_blocker"])
 
     def create(self, *, max_experiments: int = 4, max_attempts: int | None = None,
                scenario: str = "mixed") -> dict:
         with self._guard:
-            if self._active or self._creating or self._closing:
+            if self._active or self._creating or self._closing or self._project_busy:
                 raise MissionBusy("Wait for the active operation before creating another run")
             self._creating = True
         try:
@@ -117,6 +159,8 @@ class MissionControl:
                                     "parent_experiment": record.parent_experiment,
                                     "state": record.state, "decision": record.decision,
                                     "score": record.evaluation.score if record.evaluation else None,
+                                    "hypothesis": record.hypothesis,
+                                    "planned_intervention": record.planned_intervention,
                                     "git_commit": record.git_commit})
             journal = PreparationJournal(ledger)
             latest = journal.latest()
@@ -143,7 +187,7 @@ class MissionControl:
     def start(self, run_id: str) -> dict:
         self.status(run_id)  # Validate before scheduling any work.
         with self._guard:
-            if self._active or self._creating or self._closing:
+            if self._active or self._creating or self._closing or self._project_busy:
                 raise MissionBusy("One offline run can be driven at a time")
             self._active = run_id
             self._errors.pop(run_id, None)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import sqlite3
 import sys
@@ -30,7 +31,9 @@ def nonnegative_integer(value: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subcommands = parser.add_subparsers(dest="command", required=True)
-    serve = subcommands.add_parser("serve", help="Open localhost mission control for the offline research loop")
+    readiness = subcommands.add_parser("readiness", help="Inspect local live-execution gates without service calls")
+    readiness.add_argument("--json", action="store_true")
+    serve = subcommands.add_parser("serve", help="Open the local research workspace")
     serve.add_argument("--port", type=int, default=8000)
     from research_intern.execution.simulated import SCENARIOS
 
@@ -65,22 +68,28 @@ def main(argv: list[str] | None = None) -> int:
     spike.add_argument("--model", help="Optional model ID; otherwise use the runtime default")
     args = parser.parse_args(argv)
     workspace = Path(__file__).resolve().parents[2]
+    if args.command == "readiness":
+        from research_intern.controller.readiness import project_readiness
+        from research_intern.workspace.project import ProjectStore
+
+        result = project_readiness(ProjectStore(workspace).inspect())
+        if args.json:
+            print(json.dumps(result, indent=2, allow_nan=False))
+        else:
+            print("Live execution: " + ("ready" if result["can_start"] else "blocked"))
+            for item in result["checks"]:
+                print(f"{'CHECKED' if item['ready'] else 'BLOCKED'} {item['code']}: {item['message']}")
+        return 0 if result["can_start"] else 1
     if args.command == "serve":
         if not 1 <= args.port <= 65535:
             parser.error("--port must be between 1 and 65535")
         try:
-            import uvicorn
-            from research_intern.api.app import create_app
+            from research_intern.api.server import serve_workspace
         except ImportError:
             print('The dashboard needs the optional web dependencies. Install this project with pip install -e ".[web]".',
                   file=sys.stderr)
             return 1
-        print(f"Offline mission control: http://127.0.0.1:{args.port}", flush=True)
-        # Browser SSE connections can remain open indefinitely. Bound their
-        # drain time so Ctrl+C reaches lifespan cleanup and stops the driver.
-        uvicorn.run(create_app(workspace), host="127.0.0.1", port=args.port, workers=1,
-                    timeout_graceful_shutdown=3)
-        return 0
+        return serve_workspace(workspace, args.port)
     if args.command in ("run", "resume", "status", "stop"):
         from research_intern.domain.experiments import SliceError
         from research_intern.offline import initialize_run, inspect_run, print_status, resume_run

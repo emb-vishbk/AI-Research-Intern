@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -14,6 +15,15 @@ from research_intern.copilot.spike import SpikeError
 
 class MainTests(unittest.TestCase):
     arguments = ["spike", "--working-directory", "fixture", "--runtime-path", "runtime"]
+
+    def test_readiness_reports_blockers_without_starting_copilot(self) -> None:
+        with patch("research_intern.workspace.project.ProjectStore.inspect", return_value={}), \
+                patch("research_intern.copilot.spike.CopilotClient") as client, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            status = main.main(["readiness", "--json"])
+        self.assertEqual(status, 1)
+        self.assertFalse(json.loads(output.getvalue())["can_start"])
+        client.assert_not_called()
 
     def test_missing_live_flag_cannot_start_client(self) -> None:
         errors = io.StringIO()

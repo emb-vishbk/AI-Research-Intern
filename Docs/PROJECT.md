@@ -404,8 +404,13 @@ The project now has an offline implementation of contract loading, controlled
 candidate editing and Git versioning, simulated execution, deterministic evaluation,
 ledger persistence, research-state handoff, bounded repetition, basic recovery,
 and localhost API/browser mission control for simulated runs.
-A Copilot SDK spike exists but live access has not been validated. Real ML workload
-results, measured baseline import, Copilot research editing, Azure execution,
+Local source upload, independent Git workspace preparation, and explicit evaluation
+protocol confirmation are also available without signing in to services. Preparation
+preserves exact source and protects pinned evaluator/split files; it does not create
+a measured baseline or execute ML code. The actual research metric remains a human
+decision. A Copilot SDK spike exists but live access has not been validated; agent
+integration is currently deferred pending a researcher decision. Real ML workload
+results, measured baseline import, live research editing, Azure execution,
 and repetition over real ML experiments remain unfinished. See `README.md` and `current_state.md` for the
 current commands, verified tests, implementation limits, and next milestone.
 This document is the conceptual source of truth for what the project is and why it exists.

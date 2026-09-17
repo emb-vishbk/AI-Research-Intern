@@ -44,7 +44,7 @@ class WorkspaceFixture:
         self.directory.mkdir(parents=True)
         self.readme = self.directory / "README.md"
         self.text = "# Fixture\nAn ordinary ML experiment. Marker: TEST-README.\n"
-        self.readme.write_text(self.text, encoding="utf-8")
+        self.readme.write_bytes(self.text.encode("utf-8"))
         self.runtime = self.workspace / "fake-runtime.exe"
         self.runtime.write_bytes(b"Not executable: all SDK calls are mocked.")
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from dataclasses import asdict, dataclass
 
 from research_intern.domain.experiments import Constraint, EvaluationRules, SliceError, is_finite_number
@@ -96,6 +99,35 @@ class Scope:
 
 
 @dataclass(frozen=True)
+class EvaluationProtocol:
+    """Researcher-defined measurement procedure and pinned local inputs."""
+
+    metric_definition: str
+    procedure: str
+    dataset_version: str
+    evaluator: str
+    evaluator_sha256: str
+    validation_split: str
+    validation_split_sha256: str
+
+    @classmethod
+    def from_dict(cls, value: object) -> EvaluationProtocol:
+        data = mapping(value, "evaluation", set(cls.__dataclass_fields__))
+        for name in ("metric_definition", "procedure", "dataset_version"):
+            text = data[name]
+            limit = 512 if name == "dataset_version" else 4000
+            if (not isinstance(text, str) or not text.strip() or len(text) > limit
+                    or any(ord(c) < 32 and c not in "\n\t" for c in text)):
+                raise ContractError(f"evaluation.{name} needs non-blank text of at most {limit} characters")
+        for name in ("evaluator", "validation_split"):
+            relative_path(data[name])
+        for name in ("evaluator_sha256", "validation_split_sha256"):
+            if not isinstance(data[name], str) or not re.fullmatch(r"[a-f0-9]{64}", data[name]):
+                raise ContractError(f"evaluation.{name} must be a lowercase SHA-256 digest")
+        return cls(**data)
+
+
+@dataclass(frozen=True)
 class ExperimentContract:
     rules: EvaluationRules
     execution: ExecutionConfig
@@ -103,11 +135,22 @@ class ExperimentContract:
     scope: Scope
     budget: Budget
     version: str = "1.0"
+    evaluation: EvaluationProtocol | None = None
 
     @property
     def protected_paths(self) -> tuple[str, ...]:
         # Policy, infrastructure configuration, and generated scores cannot be edited.
-        return (*self.scope.protected, ".research_intern/", self.execution.job_config, self.outputs.root)
+        evaluation_paths = () if self.evaluation is None else (self.evaluation.evaluator, self.evaluation.validation_split)
+        return (*self.scope.protected, ".research_intern/", self.execution.job_config, self.outputs.root, *evaluation_paths)
+
+    @property
+    def evaluation_fingerprint(self) -> str | None:
+        if self.evaluation is None:
+            return None
+        contract = self.to_dict()
+        policy = {key: contract[key] for key in ("objective", "constraints", "evaluation")}
+        raw = json.dumps(policy, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def allows(self, path: str) -> bool:
         if any(part.casefold() in (".git", ".gitignore", ".gitattributes", ".gitmodules")
@@ -123,17 +166,20 @@ class ExperimentContract:
         constraints: dict[str, dict] = {}
         for item in self.rules.constraints:
             constraints.setdefault(item.metric, {})[item.operator] = item.value
-        return {
+        result = {
             "version": self.version, "objective": objective,
             "execution": asdict(self.execution), "outputs": asdict(self.outputs),
             "scope": {"editable": list(self.scope.editable), "protected": list(self.scope.protected)},
             "constraints": constraints,
             "budget": {key: value for key, value in asdict(self.budget).items() if value is not None},
         }
+        if self.evaluation is not None:
+            result["evaluation"] = asdict(self.evaluation)
+        return result
 
     @classmethod
     def from_dict(cls, value: object) -> ExperimentContract:
-        data = mapping(value, "contract", {"version", "objective", "execution", "outputs", "scope", "budget"}, {"constraints"})
+        data = mapping(value, "contract", {"version", "objective", "execution", "outputs", "scope", "budget"}, {"constraints", "evaluation"})
         if data["version"] != "1.0":
             raise ContractError('Only contract version "1.0" is supported')
         objective = mapping(data["objective"], "objective", {"metric", "direction"}, {"target"})
@@ -153,6 +199,8 @@ class ExperimentContract:
                     checks.append(Constraint(name, operator, threshold))
                 except ValueError as exc:
                     raise ContractError(str(exc)) from exc
+            if "min" in bounds and "max" in bounds and bounds["min"] > bounds["max"]:
+                raise ContractError(f"Constraint {name} has a minimum greater than its maximum")
         try:
             rules = EvaluationRules(objective["metric"], objective["direction"], objective.get("target"), tuple(checks))
         except ValueError as exc:
@@ -179,11 +227,13 @@ class ExperimentContract:
             paths[name] = tuple(relative_path(p, directory=isinstance(p, str) and p.endswith("/")) for p in scope[name])
             if len({p.casefold() for p in paths[name]}) != len(paths[name]):
                 raise ContractError("Scope paths cannot contain duplicates")
-        contract = cls(rules, execution, outputs, Scope(**paths), Budget(**budget))
+        evaluation = EvaluationProtocol.from_dict(data["evaluation"]) if "evaluation" in data else None
+        contract = cls(rules, execution, outputs, Scope(**paths), Budget(**budget), evaluation=evaluation)
         for editable in contract.scope.editable:
             if not contract.allows(editable) or any(overlaps(editable, p) for p in contract.protected_paths):
                 raise ContractError("Editable paths overlap protected policy, execution, outputs, or researcher scope")
-        for protected in (*contract.scope.protected, ".research_intern/", execution.job_config):
+        evaluation_paths = () if evaluation is None else (evaluation.evaluator, evaluation.validation_split)
+        for protected in (*contract.scope.protected, ".research_intern/", execution.job_config, *evaluation_paths):
             if overlaps(outputs.root, protected):
                 raise ContractError("The output root must not overlap protected inputs")
         return contract

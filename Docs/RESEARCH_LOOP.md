@@ -48,6 +48,16 @@ constraint metrics · run status · result artifacts
 
 Persist `EXP-000` in the ledger before autonomous research begins.
 
+Local source upload/preparation precedes this lifecycle. Its import commit and
+`workspace.json` preserve code and checks, but allocate no experiment ID, create no
+synthetic baseline, and consume no experiment slot. A source-only project can be
+reviewed while the objective remains undecided. A valid core contract is needed
+before Git preparation; the optional fixed evaluation protocol must be supplied and
+explicitly confirmed before the future real run is considered evaluation-ready.
+Changes after preparation require reconciliation, never an implicit reset or policy
+replacement. Result collection checks the evaluation fingerprint, when configured,
+before the existing deterministic metric comparison. Live start remains disabled.
+
 ## 7. Initial Research State
 
 After recording the baseline, derive the first compact research state. Example:

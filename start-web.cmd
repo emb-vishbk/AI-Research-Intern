@@ -8,7 +8,7 @@ if errorlevel 1 (
     exit /b 1
 )
 echo Starting Research Intern. Keep this terminal open.
-echo Open http://127.0.0.1:8000 ^(unless you pass a different --port^).
+echo The server will print its localhost address after acquiring the workspace lock.
 echo Press Ctrl+C in this terminal to stop the server.
 wsl.exe --cd "%~dp0." --exec env PYTHONPATH=src .runtime/web-venv/bin/python -B -m research_intern.main serve %*
 exit /b %errorlevel%

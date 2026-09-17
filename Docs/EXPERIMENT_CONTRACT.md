@@ -143,6 +143,52 @@ The metric name must correspond to a numeric value emitted by `metrics.json`.
 Direction must be either `maximize` or `minimize`.
 The evaluator, not Copilot, applies this direction.
 
+### Optional fixed evaluation protocol
+
+Version 1.0 additionally accepts an `evaluation` object. Legacy offline contracts
+remain valid without it, but the real-project setup cannot mark evaluation confirmed
+until it is supplied and explicitly reviewed by the researcher. No metric, split,
+target or evaluation policy is inferred from an upload.
+
+```yaml
+evaluation:
+  metric_definition: "Exact computation, aggregation, units and scale agreed by the researcher"
+  procedure: "Reproducible evaluator invocation and measurement conditions; descriptive, never executed during setup"
+  dataset_version: "Immutable researcher-supplied dataset version or content digest"
+  evaluator: evaluate.py
+  evaluator_sha256: "<64 lowercase hexadecimal characters>"
+  validation_split: split_manifest.json
+  validation_split_sha256: "<64 lowercase hexadecimal characters>"
+```
+
+This is a structural example, not an approved scientific protocol. For bounding-box
+evaluation, the definition must resolve matters such as IoU thresholds, class
+aggregation, detection matching and score scale. The researcher chooses these after
+reviewing the task, existing evaluator and measured baseline. Keep constraints in
+the existing top-level `constraints` map; document their measurement conditions in
+`procedure`. Contradictory min/max bounds are rejected.
+
+`evaluator` and `validation_split` name regular local files (up to 16 MiB each);
+their hashes must match before the contract loads. Both paths become automatically
+protected and cannot overlap editable scope or the output root. The split manifest
+should identify immutable membership and reference annotations. Protect evaluator
+helper modules, reference annotations and dataset manifests through `scope.protected`
+as well. Dataset access, correctness of the metric calculation and the scientific
+meaning of the supplied version remain researcher/workload responsibilities.
+
+The contract's `evaluation_fingerprint` is SHA-256 over UTF-8 canonical JSON of
+exactly `objective`, `constraints` and `evaluation` from `ExperimentContract.to_dict()`.
+Use sorted keys, compact separators, ASCII escaping and finite JSON values. The
+project API/UI exposes the computed value. A completed `run.json` must echo it
+when the contract has an evaluation protocol; missing or mismatched fingerprints
+fail output validation before scoring. The existing metric, direction, finite-value
+and constraint checks still apply. A matching fingerprint is a provenance assertion,
+not remote execution verification or a substitute for a protected scoring wrapper.
+
+Local workspace preparation does not confirm the protocol automatically. The
+researcher reviews the displayed policy and explicitly confirms it for the exact
+source commit and contract digest. Keep setup unconfirmed while decisions are open.
+
 ## 9. Target
 
 The objective may include an explicit stopping target:

@@ -42,11 +42,17 @@ dashboard for those simulated runs.
 
 The current `run` command creates synthetic fixtures and synthetic scores. It does
 not import arbitrary research repositories, train models, invoke a live coding
-adapter, or submit real Azure ML experiments. The dashboard can check a copy placed
-at the platform's fixed `.runtime/research-project/repository/` location by parsing
-its contract, declared paths and job YAML. That check does not import a measured
-baseline or enable actual ML execution. Real project staging/baseline import, live
-adapters, and compute/AI usage accounting remain integration work.
+adapter, or submit real Azure ML experiments. The dashboard accepts a bounded source-folder upload into the fixed
+`.runtime/research-project/repository/` location, or checks a manually placed copy,
+by parsing its contract, declared paths and job YAML. Its budget form saves draft
+limits separately from the source contract. That check does not import a measured
+baseline or enable actual ML execution. Explicit local workspace preparation now
+creates an independent Git source commit with deterministic preflight and scope checks.
+An optional fixed evaluation protocol can be pinned and explicitly confirmed for that
+source; this does not certify scientific correctness or import a measured baseline.
+Source without a contract can be uploaded for review while decisions are unresolved.
+Measured baseline import, live adapters, and compute/AI usage accounting remain
+integration work. The coding-agent integration choice is deferred.
 
 Consequently, distinguish these milestones:
 
@@ -129,6 +135,26 @@ Do not choose an arbitrary improvement target before measuring the baseline. If 
 decision is missing, document it as unresolved and request that specific decision;
 continue independent scaffolding and tests where possible. Unapproved placeholders
 must not become an active research configuration.
+
+### Optional platform evaluation binding
+
+The version 1.0 contract accepts an optional `evaluation` object with
+`metric_definition`, `procedure`, `dataset_version`, `evaluator`,
+`evaluator_sha256`, `validation_split` and `validation_split_sha256`. These describe
+the researcher-approved metric computation/scale and procedure, immutable dataset
+identity, and two regular local files pinned by lowercase SHA-256. The platform
+checks the hashes and protects the evaluator entrypoint and split manifest. Other
+trusted dependencies and annotations must also remain in protected scope.
+
+This extension is optional for existing offline contracts; a real project cannot be
+marked evaluation-confirmed without it. Setup does not execute the evaluator or
+choose the scientific metric. Completed outputs must include the matching
+`evaluation_fingerprint` in `run.json` when this protocol is configured. The platform
+exposes this value; copy it into the protected execution/export configuration. Its
+algorithm is SHA-256 of the canonical JSON object containing exactly the normalized
+contract's `objective`, `constraints` and `evaluation`, with sorted keys, compact
+separators, ASCII escaping, no non-finite numbers, and UTF-8 encoding. A matching
+fingerprint declares policy consistency; it is not proof of trustworthy execution.
 
 ## 4. Standalone operation is required
 
@@ -213,7 +239,7 @@ evaluation appropriate to the task.
 | Execution definition | YAML file named by `execution.job_config` | Currently parsed as a local mapping; actual Azure submission remains planned. |
 | Trial inputs | Documented config, data/artifact paths, output path and identity inputs | The future executor must bind its request to these explicitly. |
 | Result export | `run.json`, final metrics, metric history, logs and artifacts | The existing collector validates the declared output layout and identities. |
-| Baseline | Measured compatible outputs, exact source commit, data/environment/artifact references | Existing import services support validation/scoring; external-project onboarding is still planned. |
+| Baseline | Measured compatible outputs, exact source commit, data/environment/artifact references | Local source preparation is available; measured external baseline import remains planned. |
 | Activity | Normal execution logs and optional numeric metric history | The platform owns lifecycle events and future browser updates. |
 
 No webhook, HTTP callback, SDK plugin, or live platform connection is required inside
@@ -697,12 +723,12 @@ must not mutate source files, tracked configuration, Git state, the contract, or
 protected reference data. Keep runtime writes in explicitly supplied output/cache
 locations.
 
-The researcher can develop in an ordinary independent Git repository. The future
-platform loader must prepare a dedicated controlled workspace; it must not reset
-the researcher's active VS Code checkout. Do not move the project into the platform
-or delete its remotes/configuration just to imitate the current test fixtures.
+The researcher can develop in an ordinary independent Git repository. The platform
+copies source into its dedicated workspace and prepares fresh Git metadata there;
+it does not reset the researcher's active VS Code checkout. Exclude `.git` from the
+upload rather than removing remotes/configuration from the original repository.
 
-Current offline fixture restrictions are narrower than general repository support:
+Current controlled-workspace restrictions are narrower than general repository support:
 
 - Dedicated independent `.git` directory inside a platform run under `.runtime/`.
 - Ordinary SHA-1 Git objects and only permitted basic core configuration.
@@ -716,15 +742,17 @@ Current offline fixture restrictions are narrower than general repository suppor
   entries. This is not a large-model/data storage implementation.
 
 These are current staging limitations, not a requirement to give up normal source
-repository workflows. A compatible external-project staging path remains to be
-implemented and validated. Keep large assets separate now to simplify that work.
-Do not assume Git LFS or embedded virtual environments work in the current fixture path.
+repository workflows. Source upload is additionally bounded to 2,000 files and 64 MiB.
+Local preparation checks every imported source file and records one initial commit;
+this commit alone does not establish baseline provenance. Ignored content is never
+force-added, and interrupted preparation or later source drift requires inspection.
+Keep large assets separate. Git LFS and embedded virtual environments are unsupported.
 
 The platform's current preflight checks Python syntax, JSON objects and YAML syntax
 without executing researcher code. It does not run the project's smoke tests or
 prove dependency/model correctness. Its JSON preflight expects an object at the
-top level, so editable `.json` configuration files should use objects rather than
-top-level arrays. Document richer project validation separately.
+top level, so imported `.json` files and editable JSON configurations should use
+objects rather than top-level arrays. Document richer project validation separately.
 
 ## 14. Required tests and acceptance evidence
 

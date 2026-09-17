@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +10,10 @@ from typing import Iterator
 
 from research_intern.workspace.git import WorkspaceError
 from research_intern.workspace.paths import child_path
+
+
+class LockUnavailable(WorkspaceError):
+    """Another process currently owns the workspace lock."""
 
 
 class RunLock:
@@ -33,7 +38,9 @@ class RunLock:
         except OSError as exc:
             self.stream.close()
             self.stream = None
-            raise WorkspaceError("Another controller owns this run; status and stop remain available") from exc
+            if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK) or (os.name == "nt" and exc.errno == errno.EACCES):
+                raise LockUnavailable("Another controller owns this run; status and stop remain available") from exc
+            raise WorkspaceError(f"Unable to acquire the workspace lock: {exc}") from exc
         return self
 
     def __exit__(self, *args: object) -> None:

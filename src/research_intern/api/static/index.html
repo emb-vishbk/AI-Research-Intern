@@ -3,56 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Research Intern · Mission control</title>
+  <title>Research workspace · AI Research Intern</title>
   <link rel="stylesheet" href="/assets/app.css">
   <script src="/assets/app.js" defer></script>
 </head>
 <body>
-  <a class="skip" href="#main">Skip to research workspace</a>
-  <aside class="sidebar">
-    <a class="brand" href="/"><span class="brand-icon" aria-hidden="true">ri</span><span>Research Intern<small>LOCAL MISSION CONTROL</small></span></a>
-    <div class="side-heading">WORKSPACE <span class="local-dot">Local</span></div>
-    <section class="project-card" aria-labelledby="project-title">
-      <h2 id="project-title">Your research repository</h2>
-      <span class="pill" id="project-state">Checking location</span>
-      <p id="project-message">Reading the configured research directory…</p>
-      <code id="project-path">.runtime/research-project/repository/</code>
-      <button id="check-project" class="text-button">Check directory again</button>
-    </section>
-    <div class="side-heading">OFFLINE RUNS <button class="text-button" id="refresh-runs" aria-label="Refresh run list">Refresh</button></div>
-    <nav id="run-list" aria-label="Research runs"><p class="muted">Loading runs…</p></nav>
-    <button class="new-run primary" id="new-run">+ New offline run</button>
-    <div class="side-footer"><span class="local-dot">No service sign-in needed</span><p>Mock code edits · synthetic metrics<br>Copilot and Azure connections come later.</p></div>
-  </aside>
+  <a class="skip" href="#main">Skip to workspace</a>
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="AI Research Intern home"><span class="brand-mark" aria-hidden="true">ri</span>Research Intern<span class="header-divider" aria-hidden="true">/</span><span class="workspace-label">Workspace</span></a>
+    <span id="connection" class="connection" role="status">Connecting…</span>
+  </header>
   <main id="main">
-    <header class="topbar"><span>Research workspace <span class="slash">/</span> Overview</span><span id="connection" role="status">Connecting…</span></header>
-    <div id="error" class="notice error" role="alert" hidden></div>
-    <section class="page-heading"><div><p class="eyebrow">OBSERVE. EXPERIMENT. LEARN.</p><h1>Research mission control</h1><p class="subtitle">Follow each hypothesis from a code change to an evaluated result.</p></div><span class="mode-tag">OFFLINE SIMULATION</span></section>
-    <section id="empty" class="panel empty" hidden><span class="empty-mark" aria-hidden="true">↗</span><h2>Your next experiment starts here.</h2><p>Create an offline run to explore candidate changes, evaluation, budgets, and recovery while your ML repository is being prepared.</p><button id="first-run" class="primary">Create an offline run</button><p class="muted">Real Git history and ledger records. Simulated research results.</p></section>
-    <div id="workspace" hidden>
-      <section class="run-header panel">
-        <div><p class="eyebrow" id="run-label">CURRENT RUN</p><h2 id="objective">Research objective</h2><p class="muted" id="objective-detail"></p></div>
-        <div class="run-actions"><span id="status" class="pill">Ready</span><button id="resume" class="primary">Start run</button><button id="stop" class="secondary">Stop run</button></div>
-        <p class="run-message" id="run-message" role="status"></p>
-      </section>
-      <section class="stats" aria-label="Run summary">
-        <article class="panel stat"><span>Baseline score</span><strong id="baseline">—</strong><small>EXP-000 · researcher starting point</small></article>
-        <article class="panel stat best"><span>Best score</span><strong id="best">—</strong><small id="best-label">—</small></article>
-        <article class="panel stat"><span>Experiment budget</span><strong id="budget">—</strong><small id="attempts">—</small></article>
-        <article class="panel stat"><span>Latest experiment</span><strong class="id-value" id="latest">—</strong><small id="latest-label">—</small></article>
-      </section>
-      <div class="overview-grid">
-        <section class="panel chart-panel"><div class="section-title"><h2>Objective progress</h2><span class="muted" id="chart-metric"></span></div><div id="chart" role="img" aria-label="Recorded objective scores over experiments"></div><p class="chart-caption"><span class="legend-dot"></span>Recorded score <span class="legend-target"></span>Target · failed runs have no score</p></section>
-        <section class="panel hypothesis"><p class="eyebrow">LATEST CANDIDATE PLAN</p><h2 id="hypothesis">Waiting for a candidate</h2><p id="intervention" class="muted">The controller will select a parent from recorded evidence.</p><div class="hypothesis-footer"><span id="preparation-stage">No preparation yet</span><span id="selected-parent">Parent: EXP-000</span></div></section>
-      </div>
-      <section class="panel history"><div class="section-title"><h2>Experiment history</h2><span class="muted">Select an experiment to inspect its evidence</span></div><div class="table-scroll"><table><thead><tr><th scope="col">Experiment</th><th scope="col">Parent</th><th scope="col">Score</th><th scope="col">Decision / state</th><th scope="col">Commit</th></tr></thead><tbody id="experiments"></tbody></table></div></section>
-      <div class="evidence-grid">
-        <section class="panel detail"><div class="section-title"><h2 id="detail-title">Experiment evidence</h2><span class="pill" id="detail-decision">—</span></div><div id="detail-content"><p class="muted">Select an experiment above.</p></div></section>
-        <section class="panel activity"><div class="section-title"><h2>Activity</h2><span class="muted">Persisted events</span></div><ol id="events"></ol><div id="failures"></div></section>
-      </div>
-      <footer class="workspace-footer"><p>Synthetic scores demonstrate the controller. They do not measure your ML project's performance.</p><p id="run-path"></p></footer>
+    <div class="page-heading">
+      <div><p class="eyebrow">SINGLE RESEARCH LOOP</p><h1>Research workspace</h1><p class="subtitle">Improve your model, one experiment at a time.</p></div>
+      <div class="actions"><button id="resume" class="secondary" hidden>Resume loop</button><button id="stop" class="secondary" hidden>Stop loop</button><button id="start" class="primary" disabled aria-describedby="readiness">Start loop <span aria-hidden="true">↗</span></button></div>
     </div>
+    <div id="error" class="notice error" role="alert" hidden></div>
+    <section class="setup" aria-label="Research setup">
+      <div class="project-section">
+        <div class="section-heading"><h2>Research project</h2><span id="project-state" class="badge">Not loaded</span></div>
+        <p id="project-name" class="project-name">Your next research project</p>
+        <p id="project-message" class="helper">Upload your prepared ML source folder to get started.</p>
+        <input id="folder-picker" type="file" webkitdirectory multiple hidden aria-label="Choose research folder">
+        <button id="upload" class="secondary upload-button" disabled><span aria-hidden="true">↑</span> Upload research folder</button>
+        <p id="upload-note" class="fine-print">Source files, including .research_intern when available. Git history is excluded. Keep credentials, datasets, weights and environments separate. Up to 64 MiB / 2,000 files.</p>
+        <p id="upload-status" class="helper" role="status"></p>
+        <p id="objective" class="objective" hidden></p>
+        <button id="prepare-project" class="secondary upload-button" hidden>Prepare local workspace</button>
+        <p id="source-version" class="fine-print" hidden></p>
+      </div>
+      <form id="budget-form" class="budget-section">
+        <div class="section-heading"><h2>Loop budget</h2><span id="budget-status" class="fine-print">Set before starting</span></div>
+        <fieldset id="budget-fields" disabled>
+          <legend class="sr-only">Research loop limits</legend>
+          <div class="budget-grid">
+            <label>Azure compute<span class="input-wrap"><input id="gpu-hours" name="max_gpu_hours" type="number" min="0" step="any" placeholder="—" required><span>GPU-h</span></span></label>
+            <label>Experiments<span class="input-wrap"><input id="experiment-limit" name="max_experiments" type="number" min="0" max="50" step="1" placeholder="—" required><span>max</span></span></label>
+            <label>AI credits<span class="input-wrap"><input id="ai-credits" name="max_ai_credits" type="number" min="0" step="any" placeholder="—" required><span>max</span></span></label>
+          </div>
+          <div class="budget-footer"><p id="budget-note" class="helper">Upload a project to set its limits.</p><button id="save-budget" class="secondary compact" type="submit">Save limits</button></div>
+        </fieldset>
+        <p id="usage" class="fine-print">Compute and credit usage will appear when live metering is connected.</p>
+      </form>
+    </section>
+    <p id="readiness" class="readiness" role="status">Upload a project, then configure the loop budget.</p>
+    <details id="readiness-details" class="readiness" hidden>
+      <summary>Live execution checklist</summary>
+      <ul id="readiness-checks"></ul>
+    </details>
+    <section id="evaluation-section" class="evaluation-section" aria-labelledby="evaluation-title" hidden>
+      <div class="section-heading"><h2 id="evaluation-title">Evaluation setup</h2><span id="evaluation-state" class="badge">Not confirmed</span></div>
+      <p id="evaluation-note" class="helper"></p>
+      <details id="evaluation-details" hidden><summary>Review objective, procedure and protected inputs</summary><dl id="evaluation-policy"></dl></details>
+      <button id="confirm-evaluation" class="secondary" hidden>Confirm evaluation for this source</button>
+    </section>
+    <section class="activity-section" aria-labelledby="activity-title">
+      <div class="section-heading"><h2 id="activity-title">Current activity</h2><span id="loop-state" class="badge">Not started</span></div>
+      <p id="activity-title-text" class="activity-title">No experiment running</p>
+      <p id="activity-message" class="helper">The loop will prepare a candidate, run it on Azure, and evaluate the result.</p>
+      <p id="hypothesis" class="hypothesis" hidden></p>
+      <ol id="stages" class="stages" aria-label="Experiment lifecycle"><li data-stage="preparing">Prepare</li><li data-stage="validating">Validate</li><li data-stage="queued">Queue</li><li data-stage="training">Train</li><li data-stage="evaluating">Evaluate</li><li data-stage="recording">Record</li></ol>
+    </section>
+    <section class="results-section" aria-labelledby="results-title">
+      <div class="section-heading"><div class="results-heading"><h2 id="results-title">Experiments</h2><span id="history-kind" class="badge" hidden>Saved simulation</span></div><span id="experiment-count" class="fine-print">No experiments yet</span></div>
+      <p id="history-note" class="helper" hidden></p>
+      <div class="score-summary"><div><span>Baseline</span><strong id="baseline">—</strong></div><div><span>Best score</span><strong id="best">—</strong></div><div><span>Improvement</span><strong id="improvement">—</strong></div></div>
+      <div class="table-scroll"><table><thead><tr><th scope="col">Experiment</th><th scope="col">Change</th><th scope="col">Score</th><th scope="col">Decision</th></tr></thead><tbody id="experiments"></tbody></table></div>
+      <div id="empty-results" class="empty-results"><p>No experiments recorded yet</p><span>Each experiment and its evidence will appear here.</span></div>
+    </section>
+    <footer>Local workspace<span>One loop · sequential experiments</span></footer>
   </main>
-  <dialog id="create-dialog" aria-labelledby="create-title"><form id="create-form"><div class="section-title"><h2 id="create-title">New offline run</h2><button type="button" id="close-dialog" class="icon-button" aria-label="Close dialog">×</button></div><p class="muted">A dedicated Git fixture and ledger will record every step. These controls use scripted candidates and synthetic outputs.</p><label for="scenario">Scenario</label><select id="scenario" name="scenario"><option value="mixed">Research journey — improve, regress, fail, reach goal</option><option value="goal">Reach the target</option><option value="invalid-first">Recover from an invalid candidate</option><option value="protected-first">Reject a protected file edit, then recover</option><option value="runtime-failure">Record an execution failure</option><option value="invalid-always">Exhaust the preparation budget</option></select><div class="form-grid"><div><label for="max-experiments">Experiment limit</label><input id="max-experiments" type="number" min="0" max="50" step="1" value="4" required></div><div><label for="max-attempts">Preparation limit</label><input id="max-attempts" type="number" min="0" max="100" step="1" placeholder="2 × experiment limit"></div></div><p class="muted">Limits are fixed when the run is created. EXP-000 does not consume an experiment slot. A human stop is permanent for that run.</p><p id="create-error" class="error-text" role="alert"></p><button class="primary" id="create-submit" type="submit">Create &amp; start run</button></form></dialog>
+  <dialog id="experiment-dialog" aria-labelledby="detail-title">
+    <div class="dialog-heading"><div><p class="eyebrow">EXPERIMENT EVIDENCE</p><h2 id="detail-title">Experiment</h2></div><button id="close-detail" class="close-button" aria-label="Close experiment details">×</button></div>
+    <div id="detail-content" aria-live="polite"></div>
+  </dialog>
 </body>
 </html>

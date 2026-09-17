@@ -15,6 +15,83 @@ inspect → propose → modify → validate → execute
 → evaluate → record → update state → repeat
 ```
 
+### Live integration status and human setup gates (2026-09-17)
+
+**The end-to-end live MVP is not complete.** The serial application still runs
+simulations only. New opt-in adapters in `copilot/live.py` and `execution/azure.py`
+are tested against fake services, but are not yet connected to the research
+controller, baseline import, or live UI execution. Start remains blocked. The
+dashboard now exposes individual readiness checks rather than one generic message.
+The read-only `research-intern readiness` command reports the same local gates;
+`--json` provides structured output. Exit status 1 means live execution is blocked,
+not that a cloud operation failed. It performs no authentication or service calls.
+
+The coding adapter uses a fresh session, a reviewed source-read allowlist,
+existing-file replacements checked against the contract and current file hash,
+and a structured final candidate plan. Shell, Git, filesystem discovery and
+arbitrary tools are denied. Azure credentials are excluded from its environment.
+The controller must still verify the complete diff; these capabilities are not an
+OS/network sandbox. Source files sent to Copilot must be reviewed to exclude secrets
+and held-out data. Admitted coding attempts cannot be replayed after interruption.
+
+The Azure adapter supports the prepared workload's command-job interface: config,
+dataset, weights, experiment ID, parent ID and exact source commit, with one named
+`experiment_outputs` output. It stages the clean committed source separately from
+Git metadata, pins versioned workspace assets and an image digest, persists an
+intent and deterministic job name before submission, and reconciles ambiguous
+responses without submitting again. Only its recorded jobs may be polled/cancelled.
+Cancellation is a request; polling confirms completion. Partial downloads are
+never published as collected outputs, and existing output bundles are not replaced.
+
+`ledger/services.py` persists immutable service allowances and reservations in the
+run's `ledger.sqlite3`. GPU reservations use declared GPU count × job timeout;
+coding reservations count turns, **not AI credits**. Failures and ambiguous calls
+retain reservations. Actual usage is unknown; these are not hard billing caps.
+Azure provisioning, idle time, cancellation delays and provider billing require
+separate controls. The optional `azure` dependency group is required for real SDK
+access, not for ordinary fake-service tests. No SDK runtime download or interactive
+login is performed by these adapters.
+
+Before any live use, the researcher must:
+
+1. **Approve science and limits.** Review the uploaded project's
+    `RESEARCH_OBJECTIVE.md`, `HANDOFF_STATUS.md`, protected policy and split manifest.
+    Confirm metric, split, evaluator, editable scope, initialization/checkpoint rules,
+    training-time and GPU-memory ceilings, experiment count, total GPU allowance,
+    job timeout, coding-turn allowance and AI spending limit. Do not copy historical
+    measurements into these limits. Reconcile policy and contract before freezing
+    source or confirming evaluation.
+2. **Authenticate Copilot locally.** Follow the isolated-runtime setup later in
+    this README using the already provisioned runtime and an entitled account.
+    VS Code authentication alone does not prove the isolated runtime is signed in.
+    Keep tokens in local authentication/environment mechanisms, never source,
+    contracts, prompts or chat. Verify account/provider spending controls before
+    authorizing even the read-only live spike. Model credit cost is not inferred
+    from token or tool counts.
+3. **Verify Azure in Azure ML Studio.** Select the intended subscription, resource
+    group and workspace. Check permission to submit jobs to the approved compute;
+    record its GPU SKU/count. With the resource owner's approval, use serial compute
+    and appropriate idle shutdown; do not alter a shared cluster blindly. Inspect an
+    explicitly versioned environment using an image pinned by SHA-256, with no
+    mutable build/conda overlay. Verify versioned, read-only train/validation data
+    and initial-weights assets; do not expose final held-out test data. Then sign in
+    to the Azure CLI yourself using the organization's approved login flow. The
+    backend uses `AzureCliCredential`, not automatic interactive sign-in. Share only
+    non-secret resource names/versions/digests when configuring the application.
+4. **Establish valid baseline and scoring evidence.** The saved historical Penn-Fudan
+    job is explicitly *not* an accepted `EXP-000`; its source commit was not recorded
+    and the current source differs. Preserve it unchanged. Prefer a fresh measured
+    baseline after policy/source finalization, unless exact historical provenance
+    can be independently recovered. Update and verify the workload's missing output
+    evaluation fingerprint before freezing source. Tags, declared commits, matching
+    hashes and self-reported metrics alone do not prove trusted evaluation: scoring
+    must be verified independently of editable training code.
+
+Remaining application work includes live ledger mode/migration, measured baseline
+acceptance, independently trusted scoring, controller budget admission/recovery,
+SDK/service integration verification, live UI composition, and the real multi-trial
+demonstration. Sign-in alone will not enable Start or complete these steps.
+
 ## 2. Core Thesis
 
 The project combines LLM reasoning with external evaluation and persistent experiment memory.
@@ -715,13 +792,20 @@ The launcher runs the existing WSL Python environment; it does not install
 anything or require an interactive WSL terminal. It uses the default WSL
 distribution, which must be the one containing the provisioned environment.
 Use `start-web.cmd --port 8001` for a different port.
+Only one web server can own this workspace, even on different ports. A second
+launch reports the existing server and its last recorded address; use that server
+or stop it with Ctrl+C in its original terminal before restarting. The OS releases
+the lock when its process exits; do not delete `operation.lock` to bypass it.
 
 Open browser event streams get three seconds to drain on shutdown, then Uvicorn
 cancels them and runs the existing driver cleanup. Saved research history remains
 on disk. Closing only the browser tab does not stop the server.
 
-The dashboard runs the existing **offline simulation**, with real candidate Git
-commits and ledger records. It does not train or evaluate the researcher's model.
+The dashboard is a minimal, single-loop research workspace: project upload, three
+budget fields, current activity, and an experiment table with an evidence dialog.
+It accepts a prepared research source folder and saves draft limits. Live baseline
+import, Azure execution and Copilot credit metering remain pending, so **Start loop**
+is disabled with an explanation. No uploaded ML code is executed by this UI slice.
 
 In this Linux/WSL workspace, the optional web dependencies have been installed in
 `.runtime/web-venv`. Start from the platform root:
@@ -737,19 +821,65 @@ installation needs downloads; normal offline dashboard operation needs no networ
 services, account sign-in, Copilot usage, or Azure resources. Browser assets are
 served locally, with no Node build, CDN, or external fonts.
 
-Choose **New offline run**, set fixed experiment/preparation limits and a scenario,
-then **Create & start run**. The mixed scenario demonstrates improvement, rejection,
-execution failure and target satisfaction. Other scenarios exercise invalid edits
-and recovery. Select an experiment to inspect the parent, exact commit, hypothesis,
-preflight, diff, simulated job, metrics, constraints and evaluator conclusion.
+Choose **Upload research folder**, selecting the project root. Include
+`.research_intern/contract.yaml` when it is available. Source without a contract can
+be uploaded for review; preparation stays blocked until the researcher defines the
+objective and boundaries. The source is copied locally; it is not mounted or
+synchronized with the original folder. The upload preserves relative file paths,
+validates any supplied contract and its declared files before publishing, and refuses
+to overwrite an existing project. Limits are 2,000 files and 64 MiB of source content. Keep datasets,
+checkpoints, caches and virtual environments outside the selected source folder.
+A folder upload transfers files; empty directories, permissions and symbolic links
+are not preserved. Include hidden contract files and keep credentials separate.
+The browser omits `.git` metadata from folder selection; direct API uploads must
+exclude it. Original Git history is not imported. Baseline provenance still requires verification
+during the future measured baseline import.
 
-The web server drives one run at a time in a background thread. Closing a browser
-tab leaves that driver running. **Stop run** persists a permanent human stop;
-already submitted work can still be collected. It never authorizes a prepared
-candidate to submit. Restarting the server does not restart research automatically:
-select the retained run and **Resume run** to reconcile its existing state. A graceful
-server shutdown interrupts the driver without setting human stop. Unknown filesystem
-changes still require inspection, according to the existing recovery rules.
+Once the contract is ready, choose **Prepare local workspace**. This runs bounded
+Python/JSON/YAML checks without executing uploaded code, creates an independent Git
+repository and records its exact initial source commit. Imported contents remain
+unchanged. Ignored files are never force-added; remove caches/private files from the
+source copy if preparation reports them. Existing Git metadata, unsupported links,
+Git attributes/submodules, empty directories, files over 16 MiB and unexpected edits
+block preparation. Repeating a successful preparation reuses its source commit.
+
+Review **Evaluation setup**. The optional contract `evaluation` section records the
+exact metric definition and scale, procedure, dataset version, evaluator entrypoint
+and fixed split manifest. Pin the two local files using SHA-256; both are automatically
+protected. On Linux use `sha256sum evaluate.py split_manifest.json`; on PowerShell use
+`Get-FileHash -Algorithm SHA256` and lowercase the hash values. See
+[EXPERIMENT_CONTRACT.md](Docs/EXPERIMENT_CONTRACT.md#optional-fixed-evaluation-protocol)
+for the supported fields and output fingerprint requirement. Include helper modules,
+reference annotations and other fixed inputs in the protected scope too.
+
+Only choose **Confirm evaluation for this source** after the researcher agrees to
+the displayed objective, procedure, data split and constraints. Uploading/preparing
+does not imply agreement. If the metric is undecided, leave this unconfirmed and
+review the uploaded repository first. Finalize the source contract before preparing;
+changes after preparation are retained but require reconciliation. Interrupted Git
+publication also blocks further setup for inspection instead of overwriting history.
+No measured `EXP-000`, model training, dependency installation or live run occurs.
+The coding-agent integration choice remains deferred.
+
+Set **Azure compute (GPU-hours)**, **Experiments**, and **AI credits**, then
+**Save limits**. These are persisted in `.runtime/research-project/settings.json`,
+bound to the uploaded contract's digest; the original contract is not rewritten.
+These are draft settings for a future live loop, not enforced Azure or billing limits.
+Unknown compute/credit usage is displayed as unavailable. Changing the contract makes
+the saved settings stale. Upload/settings changes and the web controller are serialized.
+
+The UI has no run picker, scenario selector, preparation-limit input, chart or expanded
+log panels. Before a project is uploaded, it can display the latest retained offline
+loop, explicitly labelled as synthetic evidence. Uploading a project hides that
+unrelated history. An active web simulation remains labelled as such. Simulation
+creation is still available through the existing CLI/API for development.
+
+Select an experiment number to open its parent, hypothesis, changes, objective deltas,
+constraints, outcome, commit and job reference; diff and diagnostic data are collapsed.
+Updates stream automatically. **Stop loop** permanently prevents further experiments;
+already submitted work may still be collected. **Resume** is only shown for interrupted
+work or pending collection. Closing the browser does not stop a web driver, and server
+restart does not automatically resume one. The backend still drives one loop at a time.
 
 Keep developing the ML repository independently. The agreed local handoff location is:
 
@@ -765,13 +895,11 @@ ai-research-intern/
             └── ledger.sqlite3
 ```
 
-Copy the ML repository into that fixed location when it is ready, then click
-**Check directory again**. This currently parses its contract and checks declared
-paths and job YAML; it does **not** validate a measured baseline, stage real
-candidates, install ML dependencies, execute researcher code, or enable live runs.
-Those are the next integration steps. There is no upload or arbitrary-path endpoint.
-Data, model caches, virtual environments and run outputs should remain outside the
-future candidate working copy, as described in the portable researcher guide.
+Manual placement in that fixed location also remains supported; readiness updates
+automatically. Use a source-only copy without `.git`. Source checking parses the
+contract, declared paths, job YAML and any pinned evaluation inputs. Explicit preparation
+adds Git and local preflight evidence; it does not validate a measured baseline,
+prepare autonomous candidates, install ML dependencies or enable live runs. There is no arbitrary destination-path or project-replacement API.
 
 The API binds to `127.0.0.1`, serves only local browser assets and run metadata, and
 rejects foreign hosts and cross-origin mutation requests. It is a single-researcher
@@ -780,6 +908,12 @@ localhost application. Do not expose it as a hosted service. The API includes:
 | Request | Purpose |
 | --- | --- |
 | `GET /api/health`, `GET /api/project` | Server activity and fixed project readiness |
+| `GET /api/workspace`, `GET /api/workspace/events` | Single-workspace view and automatic updates |
+| `POST /api/project/upload` | Bounded multipart folder upload to the fixed empty project slot |
+| `POST /api/project/prepare` | Prepare an independent local Git workspace against the displayed contract digest |
+| `POST /api/project/evaluation/confirm` | Confirm the reviewed protocol for its exact source commit and fingerprint |
+| `POST /api/project/budget` | Save validated draft limits against the current contract digest |
+| `POST /api/project/start` | Refuses live execution until its integrations are available |
 | `GET /api/runs`, `POST /api/runs` | List recent offline runs or initialize one |
 | `GET /api/runs/{id}` | Rebuilt state, budgets, experiment history and recent events |
 | `POST /api/runs/{id}/resume` | Start/reconcile one background offline driver |
@@ -847,7 +981,9 @@ PYTHONPATH=src:tests .runtime/web-venv/bin/python -B -m unittest discover -s tes
 
 The web tests cover bounded creation, one active driver, persistent stop,
 interrupted-run resume, contract readiness, detailed evidence, local request
-boundaries and server-sent events. They use local fixtures and no external service.
+boundaries and server-sent events. Folder-upload tests cover path confinement,
+conflicts, size/count limits, interrupted bodies, atomic publication, overwrite refusal,
+separate persisted budgets, stale contracts, and isolation of synthetic history. They use local fixtures and no external service.
 The server smoke test binds a temporary loopback port. Sandboxes that prohibit
 sockets or event-loop thread wakeups need permission to run these tests outside
 that restriction. These tests do not validate visual rendering or browser JavaScript.

@@ -65,6 +65,19 @@
         "properties": {"min": {"type": "number"}, "max": {"type": "number"}}
       }
     },
+    "evaluation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["metric_definition", "procedure", "dataset_version", "evaluator", "evaluator_sha256", "validation_split", "validation_split_sha256"],
+      "properties": {
+        "metric_definition": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "procedure": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "dataset_version": {"type": "string", "minLength": 1, "maxLength": 512},
+        "evaluator": {"$ref": "#/$defs/path"},
+        "evaluator_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "validation_split": {"$ref": "#/$defs/path"},
+        "validation_split_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
     "budget": {
       "type": "object", "additionalProperties": false,
       "required": ["max_experiments"],

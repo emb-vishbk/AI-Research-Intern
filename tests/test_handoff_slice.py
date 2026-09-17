@@ -362,7 +362,7 @@ class HandoffDemoTests(WorkspaceTest):
         self.assertEqual(second["context"]["selected_parent"]["experiment_id"], "EXP-001")
         self.assertEqual(second["context"]["research_state"]["last_experiment"]["decision"], "REJECT")
         self.assertEqual(state.budget.remaining_experiments, 1)
-        with sqlite3.connect(root / "ledger.sqlite3") as database:
+        with contextlib.closing(sqlite3.connect(root / "ledger.sqlite3")) as database:
             row = database.execute("SELECT planned_intervention, parent_commit FROM experiments WHERE experiment_id='EXP-002'").fetchone()
             best_commit = database.execute("SELECT git_commit FROM experiments WHERE experiment_id='EXP-001'").fetchone()[0]
         self.assertEqual(row[0], first["plan"]["planned_intervention"])

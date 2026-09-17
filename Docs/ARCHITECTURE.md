@@ -243,6 +243,17 @@ validated files. Unsupported Git configuration, links, submodules, attributes,
 and unversionable empty directories fail closed. Candidate refs retain rejected
 or interrupted commits. These checks are not an OS sandbox or arbitrary-repository onboarding.
 
+Local source preparation now also uses this boundary. `workspace/importing.py`
+checks a source-only upload, performs syntax/config checks without execution, and
+stages a new independent Git repository with isolated config, templates and hooks.
+It checks that every supplied file is versioned, without force-adding ignored files.
+Only the staged `.git` directory is published into the reusable source workspace;
+researcher file contents are preserved. `workspace.json` records its initial commit,
+contract, source inventory and preflight evidence. This is setup, not `EXP-000`.
+Preparation is idempotent; changed source, pre-existing Git metadata and incomplete
+publication fail closed without resetting or deleting researcher work. Interrupted
+publication requires inspection; automatic setup recovery is not claimed.
+
 ## 19. Validation Gate
 
 The validation layer protects compute and scientific integrity.
@@ -278,6 +289,28 @@ It submits the candidate, records the returned Azure job ID, polls terminal stat
 Copilot never receives raw Azure credentials.
 The executor should work independently of Copilot.
 Simple polling is sufficient for the MVP.
+
+An opt-in implementation now exists in `execution/azure.py`, with a fake-service
+test seam and lazy Azure SDK imports. It supports the prepared workload's six
+identity/config/data inputs and named output, stages clean exact-commit source,
+requires versioned assets and a digest-pinned image, and restricts operations to
+durably recorded job identities. `ledger/services.py` stores immutable allowances
+and submission intents in the run's SQLite database before service operations.
+Ambiguous responses are reconciled by the saved name and intent tags, never by
+automatic resubmission. Output publication is atomic and non-overwriting.
+
+`copilot/live.py` provides fresh, restricted SDK sessions using `copilot/files.py`:
+reviewed text reads, hash-checked writes to existing allowed files, and a structured
+plan. It denies other permissions, configuration discovery and reasoning summaries.
+Turn reservations precede startup; interrupted attempts are not replayed. The full
+candidate diff still requires deterministic verification outside the adapter.
+
+These adapters are **not yet composed into the live research loop**. Existing
+simulation guards, ledger mode and browser Start restrictions remain. Live baseline
+acceptance, trusted scoring, admission/recovery composition and metering are pending.
+Reservations count turns or declared GPU-seconds, retain failed/ambiguous costs and
+do not claim actual usage or enforce provider billing caps. `controller/readiness.py`
+reports these missing capabilities explicitly; project settings cannot override them.
 
 ## 21. Azure and Output Lifecycle
 
@@ -368,16 +401,40 @@ One background thread runs the existing serial offline loop with its own SQLite
 connection. Request reads use independent connections. An OS lock allows one web
 server for the application workspace, while the existing per-run lock prevents a
 second CLI/web driver from mutating that run. No queue or distributed worker is added.
+The CLI acquires the web lock before starting Uvicorn and retains it through shutdown;
+duplicate launches exit with an actionable message. Saved server address metadata is
+only a diagnostic hint and never replaces OS lock ownership.
 The browser distinguishes actual web-driver activity from persisted controller state.
 
+The browser presents one research workspace with folder upload, compute/experiment/
+credit limits, current activity and experiment evidence in a dialog. Simulation setup
+controls remain in the developer CLI/API, not the main UI. Existing synthetic history
+is labelled explicitly and is not attached to an uploaded project.
+
 The prepared research source has one fixed handoff location:
-`.runtime/research-project/repository/`. The project endpoint currently reads its
-contract, declared paths, and job YAML. It does not execute code or import a baseline.
-Each offline run continues to own its separate synthetic fixture repository. Real
-source staging and measured baseline import remain a later slice; there is no
-browser upload or arbitrary filesystem-path API. The independent ML project stays
-usable without the platform. Host/origin checks and same-origin mutation headers
-protect the local browser boundary; this is not a remote authenticated service.
+`.runtime/research-project/repository/`. `api/uploads.py` bounds multipart transport;
+`workspace/project.py` validates portable paths, stages files, checks the experiment
+contract when present and publishes into an empty project slot. A source upload
+without a contract remains available for review but cannot be prepared. Upload never
+executes source or replaces an existing project. Explicit local preparation creates
+the independent Git workspace. Evaluation confirmation binds the reviewed protocol
+to that exact source commit and contract digest in application-owned `evaluation.json`. `controller/mission.py` serializes project changes and
+the web driver. The application-owned `settings.json` beside the repository stores
+draft budgets bound to the contract digest, preserving the researcher's original files.
+
+The optional evaluation protocol pins the evaluator entrypoint and validation split
+by SHA-256 and records the metric definition, dataset version and procedure. These
+paths are automatically protected. Result collection checks the protocol fingerprint
+before passing structured metrics to the existing deterministic evaluator. This is
+consistency checking, not proof that the workload actually ran the trusted evaluator.
+
+Measured baseline import, live candidate execution and authoritative compute/credit
+accounting remain pending. Coding-agent integration is explicitly deferred pending
+the researcher's choice; local setup neither invokes nor selects an agent provider. Live start is blocked in both the UI and API; saved limits
+are not advertised as enforced budgets. Each offline run still owns its independent
+synthetic fixture. The independent ML project remains usable without the platform.
+There is no arbitrary filesystem-path API. Host/origin checks and same-origin mutation
+headers protect the local boundary; this is not a remote authenticated service.
 The browser acts as research mission control.
 It shows objective, baseline, best experiment, budget usage, current activity, hypothesis, Azure status, history, code diff, metrics, decision, and conclusion.
 VS Code remains the primary coding environment.

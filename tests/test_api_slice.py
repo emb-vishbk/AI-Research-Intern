@@ -48,7 +48,7 @@ class ApiTests(WorkspaceTest):
         self.fail("Offline driver did not finish")
 
     def test_assets_health_and_local_browser_boundary(self):
-        for path, content in (("/", "Research mission control"), ("/assets/app.js", "EventSource"),
+        for path, content in (("/", "Research workspace"), ("/assets/app.js", "EventSource"),
                               ("/assets/app.css", "@media")):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200)
@@ -208,7 +208,8 @@ class ApiTests(WorkspaceTest):
         shutil.copytree(source, target)
         original = (target / ".research_intern/contract.yaml").read_bytes()
         result = self.client.get("/api/project").json()
-        self.assertEqual(result["status"], "contract_valid")
+        self.assertEqual(result["status"], "needs_attention")
+        self.assertIn("Unregistered Git", result["message"])
         self.assertFalse(result["execution_available"])
         self.assertEqual((target / ".research_intern/contract.yaml").read_bytes(), original)
         (target / ".research_intern/contract.yaml").write_text("unknown: true\n")
@@ -220,7 +221,7 @@ class ApiTests(WorkspaceTest):
         run_id = self.create()["id"]
         self.assertEqual(self.client.get(f"/api/runs/{run_id}/experiments/EXP-999").status_code, 404)
         link = self.mission.directory(run_id).parent / "loop-unsafe"
-        link.symlink_to(self.mission.directory(run_id), target_is_directory=True)
+        self.create_symlink(link, self.mission.directory(run_id), target_is_directory=True)
         self.assertEqual(self.client.get("/api/runs/loop-unsafe").status_code, 409)
 
     def test_stream_initial_snapshot_contains_persisted_events(self):

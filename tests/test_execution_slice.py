@@ -39,6 +39,14 @@ def candidate(parent: str = "EXP-000", commit: str = CANDIDATE_COMMIT) -> Candid
 
 
 class WorkspaceTest(unittest.TestCase):
+    def create_symlink(self, link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+        try:
+            link.symlink_to(target, target_is_directory=target_is_directory)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Windows symlink privilege is unavailable; no elevation is requested")
+            raise
+
     def setUp(self) -> None:
         parent = child_path(WORKSPACE, ".runtime", "test-workspaces")
         parent.mkdir(parents=True, exist_ok=True)
@@ -222,7 +230,7 @@ class ControllerTests(WorkspaceTest):
         poll = self.executor.get_status
 
         def check_saved(job_id):
-            with sqlite3.connect(self.ledger.path) as database:
+            with contextlib.closing(sqlite3.connect(self.ledger.path)) as database:
                 row = database.execute("SELECT job_id, git_commit FROM experiments WHERE experiment_id='EXP-001'").fetchone()
             self.assertEqual(row, (job_id, CANDIDATE_COMMIT))
             return poll(job_id)
@@ -408,7 +416,7 @@ class DemoTests(WorkspaceTest):
         self.assertNotEqual(result.git_commit, result.parent_commit)
         self.assertIn("+WEIGHT_DECAY = 0.01", result.diff)
         self.assertTrue(json.loads((root / result.outputs_path / "run.json").read_text())["simulation"])
-        with sqlite3.connect(root / "ledger.sqlite3") as database:
+        with contextlib.closing(sqlite3.connect(root / "ledger.sqlite3")) as database:
             events = database.execute("SELECT state, job_id FROM events WHERE experiment_id='EXP-001' ORDER BY sequence").fetchall()
         self.assertEqual([row[0] for row in events],
                          ["PREPARED", "SUBMITTING", "SUBMITTED", "RUNNING", "RUNNING", "RECORDED"])
