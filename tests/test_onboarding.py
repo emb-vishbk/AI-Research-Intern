@@ -132,7 +132,7 @@ class ImportTests(WorkspaceTest):
         self.assertFalse((self.root / ".runtime/research-project/repository").exists())
 
 
-class OnboardingTests(WorkspaceTest):
+class OnboardingFixture(WorkspaceTest):
     def setUp(self):
         super().setUp()
         (self.root / "fake-runtime").write_text("not executed")
@@ -149,7 +149,7 @@ class OnboardingTests(WorkspaceTest):
             "metric": "f1", "direction": "maximize", "evaluation_file": "evaluate.py", "validation_file": "split.json",
             "evaluation_command": "python evaluate.py --predictions {outputs}/predictions.json --reference {reference} --output {result}",
             "evaluation_metrics": "fresh-metrics.json", "editable": ["train.py"], "constraints": {},
-            "budget": {"max_experiments": 1, "max_gpu_hours": 1.0, "max_ai_credits": 2.0}, "job_timeout_seconds": 60,
+            "budget": {"max_experiments": 1, "max_gpu_hours": 1.0, "max_ai_credits": 100.0}, "job_timeout_seconds": 60,
             "scoring_python": sys.executable}
         self.onboarding.save(self.choices)
 
@@ -184,6 +184,7 @@ class OnboardingTests(WorkspaceTest):
         self.onboarding.find_jobs(); self.onboarding.new_baseline()
         return prepared_workspace(self.onboarding.root, repository)
 
+class OnboardingTests(OnboardingFixture):
     def test_legacy_preparation_uses_reviewed_limits_and_archives_original(self):
         original = self.prepare_legacy_source()
         budget = {"max_experiments": 3, "max_gpu_hours": 2.0, "max_ai_credits": 100.0}

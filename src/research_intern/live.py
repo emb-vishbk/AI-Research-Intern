@@ -24,6 +24,7 @@ from research_intern.execution.azure import AzureExecutor, AzureMLGateway, Azure
 from research_intern.execution.outputs import read_json
 from research_intern.ledger.preparations import PreparationJournal
 from research_intern.ledger.services import ServiceJournal
+from research_intern.ledger.credits import MICROCREDITS, MIN_SESSION_UNITS, credit_guidance
 from research_intern.ledger.sqlite import Ledger
 from research_intern.workspace.git import GitWorkspace
 from research_intern.workspace.importing import contract_digest
@@ -48,8 +49,9 @@ def validate_settings(value: dict, workspace: Path) -> dict:
     except (TypeError, ValueError) as exc:
         raise SliceError("Invalid Azure settings; check required names, bindings and numeric limits") from exc
     agent, scorer = value["copilot"], value["scoring"]
-    if set(agent) != {"runtime_path", "model", "readable_paths", "max_turns", "credits_per_turn", "timeout_seconds"}:
-        raise SliceError("Declare runtime, model, readable_paths, max_turns, credits_per_turn and timeout_seconds")
+    required_agent = {"runtime_path", "model", "readable_paths", "max_turns", "timeout_seconds"}
+    if set(agent) not in (required_agent, required_agent | {"credits_per_turn"}):
+        raise SliceError("Declare runtime, model, readable_paths, max_turns and timeout_seconds")
     if not isinstance(agent["runtime_path"], str):
         raise SliceError("Copilot runtime_path must be a workspace-relative string")
     runtime = child_path(workspace, agent["runtime_path"])
@@ -57,8 +59,9 @@ def validate_settings(value: dict, workspace: Path) -> dict:
         raise SliceError("Provision the Copilot runtime at the configured workspace-relative path first")
     if type(agent["max_turns"]) is not int or not 1 <= agent["max_turns"] <= 1000:
         raise SliceError("Choose a coding turn limit from 1 to 1000")
-    if not is_finite_number(agent["credits_per_turn"]) or agent["credits_per_turn"] <= 0:
-        raise SliceError("Choose a positive per-turn AI credit ceiling")
+    # Old receipts retain this field for provenance. All runs now use the shared pool.
+    if "credits_per_turn" in agent and (not is_finite_number(agent["credits_per_turn"]) or agent["credits_per_turn"] <= 0):
+        raise SliceError("Invalid legacy credit setting")
     if not isinstance(agent["model"], str) or not agent["model"].strip():
         raise SliceError("Choose an explicit Copilot model")
     if type(agent["timeout_seconds"]) is not int or not 1 <= agent["timeout_seconds"] <= 600:
@@ -102,8 +105,6 @@ class LiveProject:
             if (contract.budget.max_experiments <= 0 or not contract.budget.max_gpu_hours
                     or not contract.budget.max_ai_credits):
                 raise SliceError("Approve positive experiment, GPU and AI-credit allowances in the contract")
-            if settings["copilot"]["credits_per_turn"] > contract.budget.max_ai_credits:
-                raise SliceError("One coding turn exceeds the total AI-credit allowance")
             if settings["azure"]["timeout_seconds"] * settings["azure"]["gpu_count"] > contract.budget.max_gpu_hours * 3600:
                 raise SliceError("The baseline's GPU reservation exceeds the total allowance")
             job = read_yaml(repository / contract.execution.job_config)
@@ -219,6 +220,24 @@ class LiveProject:
             ServiceJournal(self.root, service="copilot_credits", unit="microcredits", max_units=math.floor(contract.budget.max_ai_credits * 1_000_000)),
         )
 
+    def add_credits(self, additional_credits: float, request_id: str, contract_sha256: str) -> dict:
+        """Human-owned allowance amendment, separate from immutable science policy."""
+        if not is_finite_number(additional_credits) or not 0 < additional_credits <= 1_000_000:
+            raise SliceError("Enter a positive additional AI-credit allowance, up to 1,000,000")
+        units = math.floor(additional_credits * MICROCREDITS)
+        if not units:
+            raise SliceError("Add at least 0.000001 AI credits")
+        with RunLock(self.root):
+            config = self.configuration()
+            if config["contract_sha256"] != contract_sha256:
+                raise SliceError("The selected project changed; refresh before adding credits")
+            with Ledger.reopen(self.root) as ledger:
+                if ledger.snapshot().stop_requested:
+                    raise SliceError("This loop was stopped. Adding credits cannot restart a stopped loop")
+            _, _, credits = self.journals(config)
+            credits.add_credits(request_id, units, contract_sha256)
+        return self.inspect()
+
     def inspect(self) -> dict:
         result = {"configured": False, "services_verified": False, "initialized": False, "baseline_accepted": False,
                   "error": None, "usage": None, "continuation_blockers": []}
@@ -250,13 +269,15 @@ class LiveProject:
                     journal = PreparationJournal(ledger)
                     if journal.count() >= config["settings"]["copilot"]["max_turns"]:
                         result["continuation_blockers"].append("PREPARATION_BUDGET_EXHAUSTED")
+                    remaining_experiments = max(0, ledger.snapshot().max_experiments - sum(r.sequence > 0 for r in ledger.history()))
                 azure, turns, credits = self.journals(config)
                 result["usage"] = {"azure": azure.usage(), "copilot": turns.usage(), "credits": credits.usage()}
+                result["credits"] = credit_guidance(credits, remaining_experiments)
                 settings, agent = config["settings"]["azure"], config["settings"]["copilot"]
                 for remaining, needed, reason in (
                     (azure.usage()["remaining"], settings["gpu_count"] * settings["timeout_seconds"], "GPU_BUDGET_EXHAUSTED"),
                     (turns.usage()["remaining"], 1, "CODING_TURN_BUDGET_EXHAUSTED"),
-                    (credits.usage()["remaining"], math.ceil(agent["credits_per_turn"] * 1_000_000), "AI_CREDIT_BUDGET_EXHAUSTED"),
+                    (credits.usage()["remaining"], MIN_SESSION_UNITS, "AI_CREDIT_BUDGET_EXHAUSTED"),
                 ):
                     if remaining < needed:
                         result["continuation_blockers"].append(reason)
@@ -287,7 +308,7 @@ class LiveProject:
                     proposer_factory = lambda: CopilotProposer(workspace=self.workspace,
                         runtime_path=child_path(self.workspace, agent["runtime_path"]), model=agent["model"],
                         readable_paths=tuple(agent["readable_paths"]), timeout_seconds=agent["timeout_seconds"],
-                        journal=turns, credit_journal=credits, credits_per_turn=agent["credits_per_turn"],
+                        journal=turns, credit_journal=credits,
                         live_authorized=True, emit=emit)
                 candidates = CandidateController(ledger, workspace, proposer_factory, timeout_seconds=agent["timeout_seconds"] + 25)
                 def admission():
@@ -296,7 +317,7 @@ class LiveProject:
                         reasons.append("GPU_BUDGET_EXHAUSTED")
                     if turns.usage()["remaining"] < 1:
                         reasons.append("CODING_TURN_BUDGET_EXHAUSTED")
-                    if credits.usage()["remaining"] < math.ceil(agent["credits_per_turn"] * 1_000_000):
+                    if credits.usage()["remaining"] < MIN_SESSION_UNITS:
                         reasons.append("AI_CREDIT_BUDGET_EXHAUSTED")
                     return reasons
                 return await ResearchLoop(candidates, ExecutionController(ledger, executor, verifier=scorer),

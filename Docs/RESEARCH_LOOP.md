@@ -389,7 +389,22 @@ Optional future rules may include stagnation or wall-clock limits. If a hard sto
 
 ## 38. Human Stop
 
-The researcher may stop the run through the UI or application interface. If no Azure job is active, stop before the next iteration. If a job is active, the implementation may allow completion or explicitly cancel through the Azure executor. Whichever behavior is chosen must be visible and deterministic. Never launch another candidate after a stop request has been accepted.
+The researcher may stop the run through the UI or application interface. A live
+stop is persisted immediately and cancels the local Copilot task, which aborts and
+closes its session. Any owned, submitted Azure job is cancelled through the executor;
+the controller polls until Azure confirms a terminal state. An uncertain submission
+is reconciled by its durable intent, never resubmitted. Cancellation failures remain
+visible and a repeat Stop request can retry them. Never launch another candidate
+after a stop request has been accepted. Recorded results and remote artifacts remain.
+
+AI credits are a shared loop allowance, not an allocation per experiment. The whole
+remaining pool is reserved for a fresh Copilot session, then settled using final
+provider usage. Missing final usage retains the reservation. When less than the
+provider's 30-credit session minimum remains, the loop waits without an active
+Copilot session. The UI offers a human-approved credit addition or Stop loop.
+Additions are append-only ledger records outside the immutable scientific contract;
+they do not resume work or clear a human stop. Cost guidance uses observed session
+usage plus stated headroom and remains an estimate, never a promise of success.
 
 ## 39. Restart Recovery
 

@@ -217,6 +217,22 @@ read-only Azure listing and download through the signed-in backend credential.
 `workspace/setup.py` generates the internal contract, frozen scoring adapter and
 service settings. Unknown evaluator arguments and ambiguous Azure resources are
 resolved through the UI, not guessed by the controller.
+`workspace/autoscoring.py` statically reads argparse declarations, local imports,
+reference paths and YAML inputs. It generates an adapter for unambiguous scoring
+interfaces and protects the scorer's transitive helpers/configuration. Retained
+evaluation assets are hash-checked before and after scoring; the adapter copies
+them into its temporary frozen-source tree and supplies isolated package paths.
+`evaluation/runtime.py` prepares a separate compatible Python and declared binary
+dependencies only during authorized preparation, with a reusable environment
+receipt and setup log. Upload/inspection performs no imports or installation.
+The environment installer is a pinned standalone uv executable extracted from
+the compatible official PyPI wheel after SHA-256 verification. Bootstrap uses
+standard-library HTTPS with the configured CA bundle and does not depend on
+host pip, ensurepip or a system package manager. Publication is atomic and a
+verified receipt permits offline reuse.
+Downloaded runs are checked for predictions/checkpoints before environment setup;
+missing named Azure outputs are retried explicitly. Training metrics are never a
+fallback for independent evaluation.
 
 The native command adapter preserves the selected YAML's environment, inputs and
 command, stages hashed assets at their original paths, and adds identity/output
@@ -330,10 +346,16 @@ files, runs a separate reviewed Python process without candidate imports, and
 records identity/metric/source/artifact hashes. Self-reported training metrics are
 validated as output data but never decide live success.
 
-Reservations count verified GPU-seconds, coding turns and per-turn AI-credit ceilings.
-The SDK receives the experimental session credit limit. Failed/ambiguous operations
-retain reservations. Actual usage and provider billing are not inferred from these
-figures. `controller/readiness.py` reports setup gates, including measured baseline
+Reservations count verified GPU-seconds, coding turns and a shared AI-credit pool.
+The SDK receives the whole remaining pool as its session limit. Final provider
+`totalNanoAiu` settles credits (1e9 nano units per AI credit); unspent allowance
+returns to the pool. Proven pre-prompt failures settle to zero; ambiguous outcomes
+retain their reservation. Immutable settlement evidence and human credit additions
+live beside the original intents in SQLite. Additions never rewrite the experiment
+contract and never clear a human stop. Remaining allowance below the provider's
+30-credit session minimum pauses research; approximate top-up guidance uses observed
+usage, with no model call. Billing is distinct and provider limits remain soft.
+`controller/readiness.py` reports setup gates, including measured baseline
 acceptance and fresh read-only Azure/Copilot verification.
 
 ## 21. Azure and Output Lifecycle
@@ -436,7 +458,16 @@ controls remain in the developer CLI/API, not the main UI. Existing synthetic hi
 is labelled explicitly and is not attached to an uploaded project.
 
 The prepared research source has one fixed handoff location:
-`.runtime/research-project/repository/`. `api/uploads.py` bounds multipart transport;
+`.runtime/research-project/repository/`. `api/uploads.py` bounds multipart transport.
+The **Choose another project** action stages and validates a replacement upload,
+then preserves the complete former project under `.runtime/project-history/`.
+`workspace/switching.py` journals publication and resumes an interrupted switch at
+server startup. The project lock inode remains in the active slot, and the serial
+driver, pending ledger operations and existing-job watcher are excluded during
+switching. Account sessions survive; project choices and model locks do not.
+Requests bind to the current project identity so an old browser tab cannot replace
+a newly loaded project. There is still only one active research loop.
+
 `workspace/project.py` validates portable paths, stages files, checks the experiment
 contract when present and publishes into an empty project slot. A source upload
 without a contract remains available for review; onboarding generates its contract
@@ -460,7 +491,8 @@ consistency checking, not proof that the workload actually ran the trusted evalu
 
 Browser and CLI support live settings, read-only service checks, baseline measurement,
 start/resume/stop and JSON reports with complete scored lineage. Live settings are
-fixed for the run; draft budget settings must match the approved contract. Resource
+fixed for the run; draft budget settings must match the approved contract. Human
+credit additions are audited runtime allowances layered over the original budget. Resource
 checks expire after 24 hours. Start requires a measured accepted baseline. The live
 phase is persisted, so resuming a baseline cannot silently start coding iterations.
 Each offline run retains its independent synthetic fixture. Real cloud/model

@@ -6,9 +6,22 @@ authorize experiments or select scientific limits.
 
 ## Implemented
 
+- Automatic evaluator setup for unambiguous argparse scoring scripts: reference,
+  local YAML dataset bindings, saved predictions/checkpoints, frozen import
+  helpers, `src/` packages and JSON results. Preparation manages a compatible
+  isolated scoring environment and CPU PyTorch dependencies, with local logs.
+  The installer is extracted from a checksum-verified official uv wheel, so
+  bootstrap requires neither pip/ensurepip nor a system venv package. Interrupted
+  downloads retry safely, including workspaces with the former partial tools venv.
+  Missing artifacts/inputs are identified before running research; named Azure
+  outputs missing from the aggregate download are retried explicitly.
 - Ordinary folder/ZIP onboarding, filtering of known private/cache/environment
   paths, separate retained assets, YAML/evaluator/reference/metric discovery,
   research goal and automatic internal contract/settings generation.
+- Choose another project from the dashboard using any folder or ZIP. Validate
+  the replacement first, preserve the former source/results/Git/ledger in project
+  history, retain sign-ins and clear project choices. Running or unresolved work
+  blocks switching; interrupted publication resumes at startup.
 - Signed-in Azure subscription/resource-group/workspace/compute selection with
   clearly labelled manual fallback; job search, explicit selection, background
   waiting and artifact collection without Copilot or duplicate submissions.
@@ -30,8 +43,10 @@ authorize experiments or select scientific limits.
   as candidates. Simulated ledgers cannot be promoted to live evidence.
 - Frozen scorer/reference files, isolated imports, identity checks, finite
   objective/constraint metrics, output hashes and durable scoring receipts.
-- GPU-time, coding-turn and AI-credit reservations before service operations;
-  native Copilot session credit ceiling; reservations separate from actual billing.
+- GPU-time and coding-turn admission, shared AI-credit pool settled with provider
+  usage, audited human credit additions, minimum/approximate top-up guidance,
+  waiting without active reasoning, and live Stop that aborts Copilot and cancels
+  owned Azure jobs. Unconfirmed usage remains reserved; provider ceilings are soft.
 - Durable Azure submission identity and recovery without duplicate jobs; bounded
   source tools, full Git diff validation, best-parent selection and negative results.
 - Browser/CLI configure, verify, baseline, start, resume, stop, inspect and report.
@@ -41,6 +56,16 @@ authorize experiments or select scientific limits.
   correction and a fast exact-source offline test runner.
 
 ## Verification
+
+Project switching: 64 switching/onboarding/connections/API tests passed, including
+Git-history preservation, invalid uploads, pending-job blocking, stale browser
+requests, in-flight polling and publication recovery. Dashboard script checks
+passed for folder/ZIP selection and form resets; no live cloud operations ran.
+
+Startup repair: restored the missing application source from the current Git
+commit. The launcher now sets its own absolute source import path and reports an
+incomplete checkout clearly. `start-web.cmd --check` passed using the WSL venv;
+all 30 launcher, localhost-server and onboarding regression tests passed.
 
 Pre-run preparation now applies reviewed choices to legacy source preparations
 with placeholder budgets, preserving the previous source and receipts. Regression

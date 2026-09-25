@@ -60,7 +60,9 @@
         <button id="upload" class="secondary upload-button" disabled><span aria-hidden="true">↑</span> Upload research folder</button>
         <input id="zip-picker" type="file" accept=".zip,application/zip" hidden aria-label="Choose project ZIP">
         <button id="upload-zip" class="secondary upload-button">Upload ZIP</button>
+        <button id="change-project" class="secondary upload-button" hidden>Choose another project</button>
         <button id="inspect-project" class="secondary upload-button" hidden>Inspect this project</button>
+        <p id="project-archive-note" class="fine-print" hidden></p>
         <p id="upload-note" class="fine-print">Your original files stay unchanged. Environments, caches and known credential files are excluded. Data, weights and previous results are kept separately from editable source. Up to 2 GiB / 30,000 retained files, including 64 MiB of source.</p>
         <p id="upload-status" class="helper" role="status"></p>
         <p id="objective" class="objective" hidden></p>
@@ -92,19 +94,20 @@
           <label>Objective metric<input id="goal-metric" list="metric-options" placeholder="For example: val_map_50_95" required><datalist id="metric-options"></datalist></label>
           <label>Better results mean<select id="goal-direction"><option value="maximize">Higher metric value</option><option value="minimize">Lower metric value</option></select></label>
         </div>
-        <details open><summary>Evaluation and permitted changes</summary>
-          <p class="fine-print">Review the detected evaluation script and validation reference. They will stay fixed while the Intern changes the selected training files.</p>
+        <p id="automatic-evaluation" class="helper" role="status">Detecting evaluation from your project…</p>
+        <details><summary>Review evaluation and permitted changes</summary>
+          <p class="fine-print">The app detects the scoring script, reference and data inputs. Evaluation code and its supporting files stay fixed while the Intern changes training files.</p>
           <div class="discovery-grid">
             <label>Evaluation script<select id="evaluation-file"></select></label>
             <label>Validation split or reference file<select id="validation-file"></select></label>
             <label>Files the Intern may change<select id="editable-files" multiple size="6"></select></label>
           </div>
-          <label>Existing evaluation command, if needed<input id="evaluation-command" placeholder="python evaluation.py --predictions {outputs}/predictions.json --output {result}"></label>
-          <p class="fine-print">Use your existing evaluator's command. {outputs} points to collected results and {result} is the JSON metrics file to write. Leave blank for an evaluator the app already recognizes.</p>
           <details><summary>Additional evaluation and run settings</summary>
+            <label>Evaluation command override (optional)<input id="evaluation-command" placeholder="Automatic — leave blank"></label>
+            <p class="fine-print">Normally no command is needed. An override can use {outputs}, {reference} and {result} for custom evaluation interfaces.</p>
             <div class="discovery-grid">
               <label>Evaluation metrics file<input id="evaluation-metrics" value="metrics.json" placeholder="Relative path written by your evaluator"></label>
-              <label>Scoring Python interpreter (optional)<input id="scoring-python" placeholder="Uses the app's Python unless you specify another installed interpreter"></label>
+              <label>Scoring Python override (optional)<input id="scoring-python" placeholder="Automatic — prepares a compatible environment"></label>
               <label>Maximum seconds per Azure job<input id="job-timeout" type="number" min="1" max="86400" value="3600"></label>
             </div>
             <label>Constraints, one per line<textarea id="research-constraints" rows="2" placeholder="latency_ms &lt;= 100&#10;peak_gpu_memory_mb &lt;= 12000"></textarea></label>
@@ -145,6 +148,19 @@
       <p id="prepare-status" class="helper" role="status"></p>
     </section>
     <p id="readiness" class="readiness" role="status">Upload a project, then configure the loop budget.</p>
+    <section id="credit-pool" class="evaluation-section" aria-labelledby="credit-title" hidden>
+      <div class="section-heading"><h2 id="credit-title">Shared AI credits</h2><span id="credit-state" class="badge"></span></div>
+      <p id="credit-balance" class="helper" role="status"></p>
+      <p id="credit-guidance" class="helper"></p>
+      <p id="credit-estimate" class="fine-print"></p>
+      <form id="credit-form">
+        <label for="additional-credits">Additional AI credits for this loop</label>
+        <input id="additional-credits" type="number" min="0.01" max="1000000" step="0.01" required>
+        <button id="add-credits" class="secondary" type="submit">Add to allowance</button>
+        <button id="credit-stop" class="secondary" type="button">Stop loop</button>
+      </form>
+      <p class="fine-print">This increases the allowance you approve for this loop; it does not buy GitHub credits. Add an amount, then use Start loop or Resume loop to continue. Copilot session limits are soft limits, so a response may finish slightly over the allowance.</p>
+    </section>
     <section id="live-setup" class="evaluation-section" aria-labelledby="live-title" hidden>
       <div class="section-heading"><h2 id="live-title">Research execution</h2><span id="live-state" class="badge">Not configured</span></div>
       <p class="helper">Connect Azure for training, Copilot for code improvements, and the evaluator for scoring.</p>
@@ -179,6 +195,13 @@
     </section>
     <footer>Local workspace<span>One loop · sequential experiments</span></footer>
   </main>
+  <dialog id="change-project-dialog" aria-labelledby="change-project-title">
+    <div class="dialog-heading"><h2 id="change-project-title">Choose another project</h2><button id="close-project-picker" class="close-button" aria-label="Close project selection">×</button></div>
+    <p>Your current project, settings and results will be preserved locally. The new project will have its own goal, budget and Azure selections. Your accounts stay signed in.</p>
+    <p class="helper">Choose any project folder or ZIP. Cancelling the picker keeps your current project loaded.</p>
+    <button id="choose-project-folder" class="secondary upload-button">Choose folder</button>
+    <button id="choose-project-zip" class="secondary upload-button">Choose ZIP</button>
+  </dialog>
   <dialog id="experiment-dialog" aria-labelledby="detail-title">
     <div class="dialog-heading"><div><p class="eyebrow">EXPERIMENT EVIDENCE</p><h2 id="detail-title">Experiment</h2></div><button id="close-detail" class="close-button" aria-label="Close experiment details">×</button></div>
     <div id="detail-content" aria-live="polite"></div>

@@ -89,7 +89,7 @@ def inspect_project(repository: Path, assets: Path | None = None) -> dict:
                 evaluators.append(name)
             elif re.search(r"(^|[/_])(train|training|fit|finetune)([/_.]|$)", lower):
                 training.append(name)
-        if re.search(r"(split|validation|ground.?truth|reference)", lower) and path.suffix in {".json", ".txt", ".csv"}:
+        if re.search(r"(manifest|split|validation|ground.?truth|reference)", lower) and path.suffix in {".json", ".txt", ".csv"}:
             splits.append(name)
         if path.name in {"pyproject.toml", "requirements.txt", "environment.yml", "environment.yaml", "Dockerfile", "setup.py"}:
             dependencies.append(name)

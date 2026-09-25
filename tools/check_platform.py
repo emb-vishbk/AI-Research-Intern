@@ -24,7 +24,7 @@ for path in (root / "schemas").glob("*.json"):
 print(f"Parsed {len(files)} Python files and the JSON schemas.", flush=True)
 with tempfile.TemporaryDirectory(prefix="research-intern-check-") as temporary:
     stage = Path(temporary)
-    for name in ("src", "tests", "schemas", "Docs"):
+    for name in ("src", "tests", "schemas", "Docs", "tools"):
         shutil.copytree(root / name, stage / name, ignore=shutil.ignore_patterns("__pycache__"))
     for path in root.glob("*"):
         if path.is_file():

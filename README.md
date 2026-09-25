@@ -50,6 +50,10 @@ py -m venv .venv
 ```
 
 `start-web.cmd` uses a Windows `.venv` when present, otherwise the WSL `.venv`.
+Run `start-web.cmd --check` to verify local application imports without starting
+the server or signing in. Keep `src/research_intern/` in the application checkout:
+project upload creates the experiment workspace, not the application source. If
+that folder is missing, restore it from your checkout before launching.
 The server prints its loopback address (default `http://127.0.0.1:8000`). It is a
 single-researcher local application, not an authenticated public web service.
 
@@ -64,9 +68,11 @@ single-researcher local application, not an authenticated public web service.
    Limits: 2 GiB / 30,000 retained files, including up to 64 MiB of source.
 3. Enter a research goal and limits. Review the detected job YAML, metric,
    evaluation script, fixed validation reference and editable training files.
-   If the evaluator is unfamiliar, enter its existing command in the UI; use
-   `{outputs}`, `{reference}` and `{result}` for its inputs and JSON metrics output.
-   The scoring Python must have that evaluator's dependencies installed.
+   The app detects ordinary Python `argparse` scoring interfaces and connects
+   predictions/checkpoints, the validation reference, local YAML data inputs and
+   JSON results automatically. Evaluator helpers and reference configuration are
+   protected too. Ambiguous or missing inputs are identified by name; custom
+   command/interpreter overrides remain available under additional settings.
 4. Load Azure subscriptions, resource groups, workspaces and compute. Select the
    resources returned by your signed-in account, or enter the specifically labelled
    subscription ID and resource names. Validate the selected target.
@@ -77,6 +83,13 @@ single-researcher local application, not an authenticated public web service.
    the historical source/data association before reusing an existing baseline.
 6. Review and select **Prepare research**. The app generates its internal contract,
    freezes evaluation, records source in Git and creates execution settings.
+   Preparation checks saved prediction artifacts and prepares a compatible,
+   project-owned scoring Python with the evaluator's declared dependencies. The
+   first setup may download Python/packages; the app/system environment is not
+   modified. A pinned, checksum-verified standalone installer bootstraps this
+   environment even when the host Python lacks pip or ensurepip; no sudo or
+   Ubuntu package installation is needed. PyTorch scoring uses CPU wheels. Installation diagnostics are in
+   `.runtime/research-project/scoring-environments/setup.log`.
    Preparation does not run the workload. It automatically checks Azure metadata and isolated
    Copilot authentication without a model turn or GPU submission. Checks expire
    after 24 hours; they cannot prove that a future submission will succeed.
@@ -99,14 +112,25 @@ and data inputs remain defined by the reviewed YAML; use stable versions and
 immutable data. The app cannot guarantee that an external URL or image tag is immutable.
 The fixed scoring bundle is limited to 64 MiB, 16 MiB per file. Copilot can edit
 up to 500 selected UTF-8 source files, each no larger than 128 KiB.
+Retained evaluation data stays outside that source bundle, is hash-checked and is
+copied into the scorer's isolated working folder. Automatic dependency setup uses
+standard declarations in `pyproject.toml` or `requirements.txt` and binary wheels;
+it does not execute an uploaded installer. Unsupported interfaces, undeclared
+dependencies, remote-only evaluation data and multiple matching artifacts need
+specific input resolution; the app never invents a scientific evaluator or a score.
 
 Historical source association is explicitly **user-attested**, stored in the report
 alongside the original job and artifact hashes. Re-scoring verifies the metric;
 it does not prove what historical code ran. Historical job charges are outside the
 new budget. Jobs without evaluable artifacts cannot supply an accepted baseline.
-There is one project slot. For another project, stop its driver and archive the
-whole `.runtime/research-project` directory before uploading new source. Do not
-delete individual ledger, intent or receipt files to bypass recovery checks.
+One project is active at a time. Select **Choose another project**, then choose
+any folder or ZIP. The replacement is validated before switching; cancelling the
+picker or uploading invalid files leaves the current project loaded. Its complete
+source, settings, logs, outputs and ledger are retained in
+`.runtime/project-history/<id>/`, with the location shown in the dashboard.
+Accounts stay signed in, while the new project needs its own goal, budget and
+Azure selections. Finish any running experiment or pending recovery before switching.
+Do not delete individual ledger, intent or receipt files to bypass recovery checks.
 
 ## Legacy command-line configuration
 
@@ -181,7 +205,6 @@ and [Microsoft device authorization](https://learn.microsoft.com/en-us/entra/ide
     "model": "REPLACE_WITH_APPROVED_MODEL_ID",
     "readable_paths": ["train.py", "configs/candidate.yaml"],
     "max_turns": 3,
-    "credits_per_turn": 0.2,
     "timeout_seconds": 120
   },
   "scoring": {
@@ -260,10 +283,19 @@ serialized objects. Frozen hashes prove identity, not scientific validity.
 
 - `max_experiments` counts candidates; `EXP-000` is separate.
 - GPU admission reserves verified GPUs × full job timeout, including baseline.
-- Each coding attempt reserves one turn and its maximum AI credits before startup.
-  The adapter also supplies the SDK's experimental `max_ai_credits` session limit.
-- Failed, rejected and ambiguous operations retain reservations. Reports show
-  reservations; actual provider billing is unknown.
+- AI credits form one pool shared by all experiments. Each fresh session receives
+  the remaining pool as its SDK `max_ai_credits` limit, with no fixed per-experiment
+  division. Copilot currently requires at least 30 available credits to start.
+- After the session finishes (or confirms abort), provider aggregate usage settles
+  its reservation and returns unused credits to the pool. A proven failure before
+  sending the prompt releases the reservation; unconfirmed usage remains held.
+- When the remaining allowance is too small, research waits without another model
+  request. **Shared AI credits** shows the minimum addition and, when usage history
+  exists, an approximate estimate for remaining experiments with 25% headroom.
+  **Add to allowance** records a human-approved increase without changing the
+  contract, source or baseline. Use **Start loop** or **Resume loop** to continue.
+  This does not purchase GitHub credits. Additions are idempotent and retained in
+  the ledger. The session ceiling is soft and one response may exceed it.
 - Provisioning/idle compute, cancellation delays and accounting may differ. Use
   provider spending controls too; local allowances are not invoice caps.
 
@@ -272,10 +304,16 @@ Azure submission. A lost response is reconciled with that job, never automatical
 resubmitted. An unresolved/mismatched job requires inspection. Interrupted coding
 attempts are retained and never replayed. Negative results stay in history.
 
-**Stop loop** permanently prevents new work; it does not cancel an already submitted
-job. Collection can resume to preserve its result. Closing the browser does not
-stop the driver. Stopping the server interrupts the local controller; restart and
+**Stop loop** saves a permanent stop, aborts active Copilot work, and requests
+cancellation of this loop's active Azure job. The UI shows **Stopping** until Azure
+confirms a terminal status; cancellation errors remain visible and can be retried.
+Saved results and remote artifacts are retained. Adding credits never clears a
+human stop. Closing the browser does not stop the driver. Stopping the server
+interrupts the local controller; restart and
 use **Resume** to reconcile pending work. Do not reset/delete the run.
+
+Provider references: [session limits](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/set-session-limit)
+and [SDK usage metrics](https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/usage-and-billing).
 
 ## CLI and reports
 

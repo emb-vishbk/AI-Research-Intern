@@ -77,6 +77,12 @@ class MissionControl:
     def project(self) -> dict:
         return self.projects.inspect()
 
+    def project_replaced(self) -> None:
+        """Called inside project_operation, after the old project is preserved."""
+        with self._guard:
+            self._errors.pop("live-project", None)
+            self._baseline_only = False
+
     @contextmanager
     def project_operation(self):
         """Keep uploads/settings and the serial controller mutually exclusive."""
@@ -93,6 +99,11 @@ class MissionControl:
     def save_budget(self, budget: LoopBudget, contract_sha256: str) -> dict:
         with self.project_operation():
             return self.projects.save_budget(budget, contract_sha256)
+
+    def add_credits(self, additional_credits: float, request_id: str, contract_sha256: str) -> dict:
+        with self.project_operation():
+            self.live.add_credits(additional_credits, request_id, contract_sha256)
+        return self.dashboard()
 
     def prepare_project(self, contract_sha256: str) -> dict:
         with self.project_operation():
@@ -260,7 +271,18 @@ class MissionControl:
     def stop(self, run_id: str) -> dict:
         with Ledger.reopen(self.directory(run_id)) as ledger:
             describe_run(ledger)
+            already_stopped = ledger.snapshot().stop_requested
             ledger.request_stop()
+            pending = any(not r.terminal and r.state != "PREPARED" for r in ledger.history())
+            if run_id == "live-project":
+                PreparationJournal(ledger).note_loop("STOPPING" if pending else "STOPPED", "HUMAN_STOP")
+        if run_id == "live-project":
+            with self._guard:
+                active = self._active == run_id
+                if active and not already_stopped and self._loop is not None and self._task is not None and not self._loop.is_closed():
+                    self._loop.call_soon_threadsafe(self._task.cancel)
+            if not active and pending:
+                self.start(run_id, baseline_only=True)  # Reconcile/cancel; persistent stop forbids new work.
         return self.status(run_id)
 
     def _drive(self, run_id: str) -> None:

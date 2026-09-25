@@ -326,6 +326,11 @@ class Connections:
         with self._guard:
             return copy.deepcopy(self._state)
 
+    def project_replaced(self):
+        """Keep account sign-ins, but release the former run's model selection lock."""
+        with self._guard:
+            self._state['copilot']['model_locked'] = False
+
     def start(self, provider, *, host=None):
         if provider not in PROVIDERS:
             raise SliceError("Unknown sign-in provider")

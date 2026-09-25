@@ -4,6 +4,28 @@ let choicesDirty = false, targetDirty = false, discoveryKey = "", subscriptionAt
 const targetFields = ["subscription_id", "resource_group", "workspace_name", "compute"];
 const resourceKinds = ["subscriptions", "resource_groups", "workspaces", "computes"];
 
+function selectProjectFile(archive, replacement = false) {
+  if (busy) return;
+  const picker = $(archive ? "zip-picker" : "folder-picker");
+  if (!archive && !("webkitdirectory" in picker)) { error("This browser does not support folder selection. Choose a ZIP instead."); return; }
+  picker.dataset.expectedProject = replacement ? snapshot.onboarding?.project_id || "" : "";
+  if (replacement && !picker.dataset.expectedProject) { error("Refresh the page before choosing another project."); return; }
+  $("change-project-dialog").close();
+  picker.click();
+}
+
+function resetProjectForm() {
+  choicesDirty = false; targetDirty = false; discoveryKey = ""; subscriptionAttempted = false;
+  dirtyBudget = false; budgetKey = null;
+  $("setup-approved").checked = false;
+  $("existing-experiment").dataset.edited = "";
+  $("existing-jobs").replaceChildren();
+  for (const kind of resourceKinds) $(kind + "-list").replaceChildren();
+  for (const id of ["resource-status", "upload-status"]) $(id).textContent = "";
+  if ($("experiment-dialog").open) $("experiment-dialog").close();
+  selectedRun = null; selectedExperiment = null; detailRevision = null; ++detailVersion;
+}
+
 function excludedProjectFile(path) {
   const parts = path.toLowerCase().split("/"), name = parts.pop(); parts.shift();
   const skip = new Set([".git", ".venv", "venv", "env", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".cache", ".runtime", ".idea", ".vscode", ".azure", ".ssh", ".aws", ".copilot", ".codex"]);
@@ -26,13 +48,17 @@ function options(id, values, selected, multiple = false) {
 function renderOnboarding(state) {
   const analysis = state?.analysis;
   $("upload-zip").hidden = !snapshot.project.upload_available;
+  $("change-project").hidden = !state?.project_id;
+  $("project-archive-note").hidden = !state?.previous_project_archive;
+  $("project-archive-note").textContent = state?.previous_project_archive ? `Previous project preserved at ${state.previous_project_archive}` : "";
   $("inspect-project").hidden = snapshot.project.status === "missing" || Boolean(state?.configured);
   $("project-discovery").hidden = !analysis;
   $("azure-discovery").hidden = !analysis;
   if (!analysis) return;
+  $("automatic-evaluation").textContent = state.evaluation_setup?.message || "Evaluation inputs will be detected from the selected project YAML.";
   const summary = state.import || {}, count = Object.values(summary.excluded || {}).reduce((a, b) => a + b, 0);
   $("discovery-summary").textContent = `${analysis.files.length} source files; ${Object.keys(summary.assets || {}).length} retained data, weight or result files; ${count} environment, cache or private files excluded. ${analysis.problems.join(" ")}`;
-  $("budget-note").textContent = state.configured ? "Research limits are fixed for this run." : "Set the maximum GPU time, candidate experiments and AI credits for this research loop.";
+  $("budget-note").textContent = state.configured ? "AI credits are shared across the whole loop. Add to that allowance below; experiment and GPU limits stay fixed." : "Set the maximum GPU time, candidate experiments and shared AI-credit allowance for this research loop.";
   $("prepare-project").hidden = true;
   $("evaluation-section").hidden = !snapshot.project.workspace_prepared;
   const key = JSON.stringify([analysis.files, analysis.jobs, state.configured]);
@@ -41,7 +67,7 @@ function renderOnboarding(state) {
     options("job-config", analysis.jobs.filter(j => j.supported).map(j => j.path), state.job_config);
     options("evaluation-file", [...analysis.evaluators, ...analysis.files.filter(p => p.endsWith(".py"))], state.evaluation_file || contract.evaluation?.evaluator || (analysis.evaluators.length === 1 ? analysis.evaluators[0] : ""));
     options("validation-file", [...analysis.validation_files, ...analysis.files.filter(p => /\.(json|txt|csv)$/.test(p))], state.validation_file || contract.evaluation?.validation_split || (analysis.validation_files.length === 1 ? analysis.validation_files[0] : ""));
-    const blocked = new Set([$("evaluation-file").value, $("validation-file").value, state.job_config]);
+    const blocked = new Set([$("evaluation-file").value, $("validation-file").value, state.job_config, ...(state.evaluation_setup?.protected || [])]);
     options("editable-files", analysis.files.filter(p => !p.startsWith(".research_intern/") && !blocked.has(p)), state.editable || contract.scope?.editable || analysis.training, true);
     $("research-goal").value = state.goal || contract.goal || "";
     $("goal-metric").value = state.metric || contract.objective?.metric || "";
@@ -71,7 +97,7 @@ function renderOnboarding(state) {
     details.append(node("summary", `${run.files.length} downloaded files (reported metrics are unverified until re-scoring)`), list);
     $("existing-job-evidence").append(details);
   }
-  $("prepare-status").textContent = state.configured ? "Research prepared. Establish the baseline once account checks pass." : "Preparation records your choices and checks your connected accounts. It does not submit a job or start Copilot reasoning.";
+  $("prepare-status").textContent = state.configured ? "Research prepared. Establish the baseline once account checks pass." : state.scoring_environment?.message || "Preparation configures evaluation and its Python dependencies automatically. First-time downloads may take several minutes. No training job or Copilot reasoning starts during preparation.";
   if (run && state.configured && !snapshot.live?.baseline_accepted) {
     $("live-message").textContent = run.phase === "downloaded" ? "Re-score the selected run's saved artifacts to establish the baseline. No duplicate Azure job is submitted." : run.message;
     $("measure-baseline").textContent = "Re-score existing baseline";
@@ -85,6 +111,7 @@ function renderOnboarding(state) {
 function onboardingControls(locked) {
   const state = snapshot.onboarding, configured = state?.configured;
   for (const id of ["upload-zip", "inspect-project"]) $(id).disabled = locked;
+  for (const id of ["change-project", "choose-project-folder", "choose-project-zip"]) $(id).disabled = locked;
   for (const id of ["save-project-choices", "validate-target", "prepare-discovered"])
     $(id).disabled = locked || Boolean(configured);
   document.querySelectorAll(".resource-load").forEach(button => { button.disabled = locked || Boolean(configured) || snapshot.connections?.azure.status !== "connected"; });
@@ -142,12 +169,16 @@ async function findExistingJobs() {
 
 function bindOnboarding() {
   $("inspect-project").addEventListener("click", () => onboardingAction(() => api("/api/onboarding/inspect", {})));
-  $("upload-zip").addEventListener("click", () => $("zip-picker").click());
+  $("upload-zip").addEventListener("click", () => selectProjectFile(true));
+  $("change-project").addEventListener("click", () => $("change-project-dialog").showModal());
+  $("close-project-picker").addEventListener("click", () => $("change-project-dialog").close());
+  $("choose-project-folder").addEventListener("click", () => selectProjectFile(false, true));
+  $("choose-project-zip").addEventListener("click", () => selectProjectFile(true, true));
   $("zip-picker").addEventListener("change", event => {
     const file = event.target.files[0]; event.target.value = "";
     if (!file) return;
     if (file.size > 2 * 1024 ** 3) { error("Select a ZIP up to 2 GiB."); return; }
-    onboardingAction(() => uploadFolder([file], true));
+    onboardingAction(() => uploadFolder([file], true, event.target.dataset.expectedProject || ""));
   });
   $("project-choices").addEventListener("input", () => { choicesDirty = true; $("choices-status").textContent = "Unsaved project choices"; });
   $("project-choices").addEventListener("submit", event => { event.preventDefault(); onboardingAction(saveProjectChoices); });
@@ -180,6 +211,7 @@ function bindOnboarding() {
     if (!$("setup-approved").checked) throw new Error("Review the displayed setup and select its confirmation checkbox.");
     if (targetDirty) throw new Error("Validate the changed Azure target before preparation.");
     await saveProjectChoices();
+    $("prepare-status").textContent = "Preparing evaluation inputs and Python dependencies. First-time downloads may take several minutes…";
     await api("/api/onboarding/prepare", {authorized: true});
     await api("/api/project/live/verify", {});
   }));

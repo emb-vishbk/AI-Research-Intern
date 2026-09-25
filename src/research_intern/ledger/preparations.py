@@ -70,6 +70,12 @@ class PreparationJournal:
         return policy
 
     def count(self) -> int:
+        if self.ledger.mode == "live" and self.ledger._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='service_settlements'").fetchone():
+            # Retain attempt IDs/history while exempting proven pre-prompt failures.
+            return self.ledger._db.execute("""SELECT COUNT(*) FROM preparations p WHERE NOT EXISTS (
+                SELECT 1 FROM service_settlements s WHERE s.service='copilot' AND s.units=0
+                AND s.request_id='attempt-' || p.sequence)""").fetchone()[0]
         return self.ledger._db.execute("SELECT COUNT(*) FROM preparations").fetchone()[0]
 
     def get(self, attempt_id: str) -> Preparation:

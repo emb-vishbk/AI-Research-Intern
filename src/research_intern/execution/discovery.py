@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 import re
 from urllib.parse import quote, urlsplit
 
@@ -175,3 +176,15 @@ class AzureDiscovery:
     def download(self, target, name, destination):
         with self.client(target) as client:
             client.jobs.download(name=name, download_path=str(destination), all=True)
+        self.ensure_outputs(target, name, destination)
+
+    def ensure_outputs(self, target, name, destination):
+        """Recover named outputs when the aggregate SDK download only returned logs."""
+        from research_intern.workspace.paths import child_path
+        with self.client(target) as client:
+            job = client.jobs.get(name)
+            for output in (getattr(job, "outputs", None) or {}):
+                folder = child_path(Path(destination), "named-outputs", output)
+                if folder.is_dir() and any(p.is_file() for p in folder.rglob("*")):
+                    continue
+                client.jobs.download(name=name, download_path=str(destination), output_name=output)

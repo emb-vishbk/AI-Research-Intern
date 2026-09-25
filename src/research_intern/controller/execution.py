@@ -124,3 +124,26 @@ class ExecutionController:
         except EvaluationError as exc:
             return self.ledger.record_failure(experiment_id, "EVALUATION_INVALID", str(exc))
         return self.ledger.record_result(experiment_id, result, evaluation)
+
+    def cancel_pending(self) -> bool:
+        """Cancel only this loop's jobs; return true after Azure confirms terminal state."""
+        complete = True
+        for record in self.ledger.history():
+            if record.terminal or record.state == "PREPARED":
+                continue  # Unsubmitted candidates stay available as evidence.
+            if record.job_id is None:
+                request = JobRequest(record.experiment_id, record.parent_experiment, record.git_commit)
+                job_id = self.executor.find_job(request)
+                if job_id is None:
+                    raise SliceError("Stop is saved, but Azure submission is unresolved. Retry Stop loop to reconcile and cancel the owned job")
+                self.ledger.record_job(record.experiment_id, job_id)
+                record = self.ledger.get(record.experiment_id)
+            status = self.executor.get_status(record.job_id)
+            self.ledger.record_status(record.experiment_id, status)
+            if status in {"completed", "failed", "cancelled"}:
+                self.ledger.record_failure(record.experiment_id, "HUMAN_STOP",
+                    f"Loop stopped by the user; Azure job is {status}. Existing remote outputs are retained")
+            else:
+                self.executor.cancel_job(record.job_id)
+                complete = False
+        return complete

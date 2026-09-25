@@ -14,6 +14,7 @@ from research_intern.contracts.loader import load_contract, read_yaml
 from research_intern.contracts.models import CONTRACT_PATH, ExperimentContract, relative_path
 from research_intern.domain.experiments import SliceError
 from research_intern.evaluation.trusted import digest
+from research_intern.evaluation.runtime import prepare_runtime
 from research_intern.execution.native import validate_native
 from research_intern.live import validate_settings
 from research_intern.workspace.importing import (contract_digest, prepared_workspace, prepare_source,
@@ -23,6 +24,7 @@ from research_intern.workspace.lock import RunLock
 from research_intern.workspace.paths import child_path
 from research_intern.workspace.project import LoopBudget
 from research_intern.workspace.recovery import atomic_bytes
+from research_intern.workspace.autoscoring import discover, source_file
 
 
 def generated_settings(onboarding, state, contract, files, repository=None):
@@ -71,8 +73,8 @@ def generated_settings(onboarding, state, contract, files, repository=None):
         "azure": {**state["target"], "environment": "", "image": "", "dataset": "", "weights": "",
                   "inputs": {}, "native_job": True, "timeout_seconds": timeout, "gpu_count": gpu},
         "copilot": {"runtime_path": runtime, "model": agent["selected_model"], "readable_paths": readable,
-                    "max_turns": turns, "credits_per_turn": budget.max_ai_credits / turns, "timeout_seconds": 600},
-        "scoring": {"python": state.get("scoring_python") or sys.executable, "files": protected, "timeout_seconds": 3600},
+                    "max_turns": turns, "timeout_seconds": 600},
+        "scoring": {"python": state.get("prepared_scoring_python") or state.get("scoring_python") or sys.executable, "files": protected, "timeout_seconds": 3600},
     }
     return validate_settings(result, onboarding.workspace)
 
@@ -83,6 +85,20 @@ def build_contract(repository, assets, metadata, state):
     budget = LoopBudget(**state.get("budget", {}))
     if not budget.max_experiments or not budget.max_gpu_hours or not budget.max_ai_credits:
         raise SliceError("Set positive experiment, GPU-hour and AI-credit limits")
+    plan = discover(repository, assets, state, metadata)
+    if plan["status"] != "ready":
+        raise SliceError(plan["message"])
+    state.update(evaluation_file=plan["evaluator"], validation_file=plan["reference"], evaluation_setup=plan)
+    # Import helpers and references may have been retained as assets (e.g. a
+    # project's src/data package). Promote only this statically discovered closure.
+    for name in plan["protected"]:
+        target = child_path(repository, name)
+        original = source_file(repository, assets, name)
+        if not target.is_file() and original.is_file():
+            if original.stat().st_size > 16 * 1024**2:
+                raise SliceError(f"Evaluator reference exceeds the source bundle limit: {name}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(original, target)
     for field, label in (("evaluation_file", "evaluation script"), ("validation_file", "validation split or reference file")):
         if not state.get(field):
             raise SliceError(f"Select the {label} from your project")
@@ -100,22 +116,22 @@ def build_contract(repository, assets, metadata, state):
         raise SliceError("Select at least one existing training or configuration file the Intern may change")
     if evaluator in editable or reference in editable or state["job_config"] in editable:
         raise SliceError("The evaluator, validation reference and Azure job definition must remain fixed")
+    editable = [name for name in editable if name not in plan["protected"]]
+    if not editable:
+        raise SliceError("The selected editable files all belong to fixed evaluation. Select the training code or training configuration to improve.")
     internal = repository / ".research_intern"
     internal.mkdir(exist_ok=True)
-    command = state.get("evaluation_command", "").strip()
+    command = plan["command"]
     if command:
         arguments = shlex.split(command)
         if not arguments or not any(evaluator == arg for arg in arguments):
             raise SliceError("The evaluation command must name the selected evaluation script using its project-relative path")
         relative_path(state.get("evaluation_metrics", "metrics.json"))
-        spec = {"command": command, "reference": reference, "metrics_file": state.get("evaluation_metrics", "metrics.json")}
+        spec = plan["spec"]
         (internal / "scoring.json").write_text(json.dumps(spec), encoding="utf-8")
         shutil.copyfile(Path(__file__).with_name("score_runner.py"), internal / "score_runner.py")
         entry = ".research_intern/score_runner.py"
     else:
-        text = child_path(repository, evaluator).read_text(encoding="utf-8")
-        if not all(argument in text for argument in ("--outputs", "--request", "--result")):
-            raise SliceError(f"The selected evaluator ({evaluator}) does not expose the scoring interface. Select your scoring script and enter its evaluation command to score predictions or a checkpoint")
         entry = evaluator
     shutil.copyfile(Path(__file__).with_name("job_runner.py"), internal / "job_runner.py")
     job_path = repository / state["job_config"]
@@ -194,6 +210,19 @@ def prepare_discovered(onboarding, *, authorized=False):
                 staged = Path(temporary) / "repository"
                 shutil.copytree(repository, staged, ignore=shutil.ignore_patterns(".git"))
                 contract = build_contract(staged, root / "assets", state["import"] or {}, state)
+                if state.get("baseline_choice") == "existing" and selected.get("phase") == "downloaded":
+                    from research_intern.workspace.score_runner import artifact_file
+                    outputs = child_path(onboarding.workspace, selected["directory"])
+                    if not outputs.is_relative_to(root / "imported-jobs"):
+                        raise SliceError("The selected job's outputs must be inside this project's download directory")
+                    if hasattr(onboarding.cloud, "ensure_outputs"):
+                        onboarding.cloud.ensure_outputs(state["target"], selected["job"]["name"], outputs)
+                    selected_output = child_path(outputs, state["existing_output"]) if state.get("existing_output") else outputs
+                    for candidates in state["evaluation_setup"]["spec"]["artifacts"].values():
+                        try:
+                            artifact_file(selected_output, candidates)
+                        except RuntimeError as exc:
+                            raise SliceError(str(exc) + " Choose a run with saved evaluation artifacts, or choose a new baseline.") from exc
                 files = sorted(p.relative_to(staged).as_posix() for p in staged.rglob("*") if p.is_file())
                 settings = generated_settings(onboarding, state, contract, files, staged)
                 # Fail before publishing if the chosen scorer exceeds its bundle limit.
@@ -202,6 +231,9 @@ def prepare_discovered(onboarding, *, authorized=False):
                     raise SliceError("The fixed evaluator source and reference must fit a 64 MiB bundle (16 MiB per file)")
                 from research_intern.validation.preflight import validate_files
                 validate_files(staged, tuple(files))
+                # Only explicit preparation installs dependencies, never upload or
+                # inspection. Fail before publishing if the scoring runtime fails.
+                settings["scoring"]["python"] = prepare_runtime(root, state["evaluation_setup"]["runtime"], state.get("scoring_python", ""))
                 if prepared is not None:
                     if snapshot_tree(staged, omit_git=True) != original:
                         prepare_source(Path(temporary), staged, contract_digest(staged))
@@ -220,6 +252,8 @@ def prepare_discovered(onboarding, *, authorized=False):
         onboarding.mission.live.configure(settings, authorized=True)
         onboarding.connections.providers.bind(settings)
         current = onboarding._read()
+        current.update(evaluation_file=state["evaluation_file"], validation_file=state["validation_file"],
+                       evaluation_setup=state["evaluation_setup"], editable=list(contract.scope.editable))
         current["setup_complete"] = True
         onboarding._write(current)
     return onboarding.snapshot()

@@ -73,6 +73,7 @@ class LiveLoopTests(ServiceFixture):
         (self.repository / "evaluate.py").write_text(SCORER)
         contract_path = self.repository / ".research_intern/contract.yaml"
         value = yaml.safe_load(contract_path.read_text())
+        value["budget"]["max_ai_credits"] = 100
         value["evaluation"]["evaluator_sha256"] = hashlib.sha256(SCORER.encode()).hexdigest()
         contract_path.write_text(yaml.safe_dump(value))
         store = ProjectStore(self.root)

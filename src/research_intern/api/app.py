@@ -79,6 +79,13 @@ class UseDraft(BaseModel):
     authorized: Literal[True]
 
 
+class CreditAddition(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    additional_credits: float = Field(gt=0, le=1_000_000)
+    request_id: str = Field(min_length=1, max_length=100)
+    contract_sha256: str = Field(min_length=64, max_length=64)
+
+
 class ProjectChoices(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
     goal: str = Field(min_length=1, max_length=4000)
@@ -167,6 +174,7 @@ def create_app(workspace: Path, *, mission: MissionControl | None = None,
         server_root.mkdir(parents=True, exist_ok=True)
         # One web server owns the serial mission driver for this workspace.
         with own_run(server_root, server_lock):
+            await asyncio.to_thread(onboarding.recover_project_switch)
             # Session credentials do not survive process restart. A prior receipt
             # must not make a new dashboard claim its connections are verified.
             await asyncio.to_thread(mission.live.invalidate_service_check)
@@ -263,10 +271,12 @@ def create_app(workspace: Path, *, mission: MissionControl | None = None,
         return await asyncio.to_thread(onboarding.snapshot)
 
     @app.post("/api/onboarding/upload", status_code=201)
-    async def upload_ordinary_project(request: Request, archive: bool = False):
+    async def upload_ordinary_project(request: Request, archive: bool = False, replace: bool = False,
+                                      expected_project: str = ""):
         async with folder_files(request, max_bytes=MAX_PROJECT_BYTES + MAX_PROJECT_FILES * 1024,
                                 max_files=MAX_PROJECT_FILES) as files:
-            return await run_in_threadpool(onboarding.upload, files, archive=archive)
+            return await run_in_threadpool(onboarding.upload, files, archive=archive, replace=replace,
+                                            expected_project=expected_project)
 
     @app.post("/api/onboarding/inspect")
     async def inspect_ordinary_project():
@@ -371,6 +381,10 @@ def create_app(workspace: Path, *, mission: MissionControl | None = None,
         result["connections"] = connections.snapshot()
         result["onboarding"] = onboarding.snapshot()
         return result
+
+    @app.post("/api/project/credits")
+    async def add_credits(body: CreditAddition):
+        return await asyncio.to_thread(mission.add_credits, **body.model_dump())
 
     @app.get("/api/workspace/events")
     async def workspace_events(request: Request):

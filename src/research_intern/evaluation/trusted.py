@@ -78,6 +78,14 @@ class TrustedScorer:
     def check(self):
         if inventory(self.code) != self.files:
             raise OutputError("Frozen scoring code or reference inputs changed")
+        spec = self.code / ".research_intern/scoring.json"
+        if spec.is_file():
+            for name, expected in read_json(spec).get("assets", {}).items():
+                source = child_path(self.code, name)
+                if not source.is_file():
+                    source = child_path(self.root / "assets", name)
+                if not source.is_file() or source.stat().st_size != expected["bytes"] or digest(source) != expected["sha256"]:
+                    raise OutputError(f"Retained evaluation input changed or is missing: {name}")
 
     def verify(self, outputs: Path, request: JobRequest, job_id: str) -> CollectedResult:
         self.check()
@@ -97,7 +105,7 @@ class TrustedScorer:
         with tempfile.TemporaryDirectory(dir=self.root, prefix="scoring-") as temporary:
             work = Path(temporary)
             request_file, result_file = work / "request.json", work / "score.json"
-            request_file.write_text(json.dumps({**identity, "objective": self.contract.to_dict()["objective"],
+            request_file.write_text(json.dumps({**identity, "asset_root": str(self.root / "assets"), "objective": self.contract.to_dict()["objective"],
                                                "constraints": self.contract.to_dict()["constraints"]}), encoding="utf-8")
             # -I excludes candidate cwd, PYTHONPATH and user site packages. Only the
             # reviewed frozen module tree is inserted, never the candidate source.

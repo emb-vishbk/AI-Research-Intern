@@ -106,6 +106,11 @@ class ResearchLoop:
         with own_run(self.ledger.root, owner) as lock:
             self._recover_preparation()
             snapshot = self.ledger.snapshot()
+            if snapshot.stop_requested and self.ledger.mode == "live":
+                complete = self.execution.cancel_pending()
+                self.journal.note_loop("STOPPED" if complete else "STOPPING",
+                    "HUMAN_STOP" if complete else "Stop saved. Waiting for Azure to confirm cancellation")
+                return not complete
             pending = [record for record in snapshot.experiments if not record.terminal]
             if len(pending) > 1:
                 raise SliceError("Multiple unfinished experiments require reconciliation")
@@ -154,17 +159,23 @@ class ResearchLoop:
                 if "BASELINE_MISSING" not in reasons and (preparation is None or preparation.stage in ("RESERVED", "RECOVERED")):
                     best = self.ledger.best()
                     self.workspace.prepare_parent(best.git_commit, known_commits={r.git_commit for r in snapshot.experiments})
-                self.journal.note_loop("STOPPED", ", ".join(reasons))
+                self.journal.note_loop("WAITING_FOR_CREDITS" if "AI_CREDIT_BUDGET_EXHAUSTED" in reasons else "STOPPED", ", ".join(reasons))
                 return False
             try:
                 record = await self.candidates.prepare_candidate(owner=lock)
-            except Exception:
+            except Exception as exc:
                 latest = self.journal.latest()
                 if latest is None or latest.stage != "FAILED":
                     if self.ledger.snapshot().stop_requested:
                         return True
                     raise
                 self._recover_preparation()
+                if getattr(exc, "recovery_required", False):
+                    raise
+                if getattr(exc, "pause_reason", None):
+                    reason = exc.pause_reason
+                    self.journal.note_loop("WAITING_FOR_CREDITS" if reason == "AI_CREDIT_BUDGET_EXHAUSTED" else "PAUSED", str(exc))
+                    return False
                 return True
             self.emit(f"Prepared {record.experiment_id} from {record.parent_experiment}.")
             return True
@@ -185,6 +196,13 @@ class ResearchLoop:
                         break
                     await asyncio.sleep(poll_interval)
             except (asyncio.CancelledError, KeyboardInterrupt):
+                if self.ledger.mode == "live" and self.ledger.snapshot().stop_requested:
+                    self._recover_preparation()
+                    while not self.execution.cancel_pending():
+                        self.journal.note_loop("STOPPING", "Stop saved. Waiting for Azure to confirm cancellation")
+                        await asyncio.sleep(poll_interval)
+                    self.journal.note_loop("STOPPED", "HUMAN_STOP")
+                    return self.status()
                 self.journal.note_loop("INTERRUPTED", "Resume will reconcile persisted preparation and job state")
                 raise
             except Exception as exc:

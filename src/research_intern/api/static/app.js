@@ -5,6 +5,7 @@ const number = value => Number.isFinite(value) ? value.toLocaleString(undefined,
 const friendly = value => (value || "Not started").toLowerCase().replaceAll("_", " ").replaceAll("-", " ");
 let snapshot = null, busy = false, online = false, dirtyBudget = false, budgetKey = null;
 let stream = null, detailVersion = 0, selectedExperiment = null, selectedRun = null, detailRevision = null;
+let currentProjectId = null;
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -51,15 +52,23 @@ function controls() {
   const pending = run?.experiments.some(r => ["PREPARED", "SUBMITTING", "SUBMITTED", "RUNNING"].includes(r.state));
   const interrupted = run && (["INTERRUPTED", "RECOVERY_REQUIRED", "RUNNING", "PAUSED"].includes(run.controller.state) || run.driver.error);
   const humanStop = Boolean(run?.research_state.blocking_reasons.includes("HUMAN_STOP"));
-  const canResume = Boolean(run && !active && (pending || (interrupted && !humanStop)));
+  const canResume = Boolean(run && !active && !humanStop && (pending || interrupted));
   $("resume").hidden = !canResume;
   $("resume").disabled = locked;
   $("resume").textContent = pending ? "Resume collection" : "Resume saved loop";
-  $("stop").hidden = !(active || canResume);
-  $("stop").disabled = busy || !online || Boolean(run?.research_state.blocking_reasons.includes("HUMAN_STOP"));
+  const cancellable = run?.experiments.some(r => ["SUBMITTING", "SUBMITTED", "RUNNING"].includes(r.state));
+  $("stop").hidden = !run || (humanStop && !cancellable && !active);
+  $("stop").disabled = busy || !online || (humanStop && (active || !cancellable));
+  $("add-credits").disabled = locked || !snapshot.live?.initialized || humanStop;
+  $("additional-credits").disabled = $("add-credits").disabled;
+  $("credit-stop").disabled = $("stop").disabled;
+  $("credit-stop").hidden = $("stop").hidden;
   onboardingControls(locked);
 }
 function render(data) {
+  const incomingProjectId = data.onboarding?.project_id || "";
+  if (currentProjectId !== null && currentProjectId !== incomingProjectId) resetProjectForm();
+  currentProjectId = incomingProjectId;
   snapshot = data;
   renderConnections(data.connections);
   const project = data.project, run = data.run;
@@ -87,9 +96,10 @@ function render(data) {
     budgetKey = nextKey;
   }
   $("budget-status").textContent = dirtyBudget ? "Unsaved changes" : project.budget_saved ? "Draft limits saved" : "Set before starting";
-  $("budget-note").textContent = data.live?.configured ? "Fixed run limits. Failed or interrupted requests retain their reservations." : project.status !== "contract_valid" ? "A valid project contract is required." : "Draft limits must match the prepared contract before live configuration.";
+  $("budget-note").textContent = data.live?.configured ? "AI credits are shared across the whole loop. Add to that allowance below; experiment and GPU limits stay fixed." : project.status !== "contract_valid" ? "A valid project contract is required." : "Draft limits must match the prepared contract before live configuration.";
   const usage = data.live?.usage;
-  $("usage").textContent = usage ? `Reserved: ${number(usage.azure.reserved / 3600)} GPU-h, ${usage.copilot.reserved} coding turns, ${number(usage.credits.reserved / 1000000)} AI credits. Actual billed usage may differ.` : "Service reservations appear after baseline initialization.";
+  $("usage").textContent = usage ? `GPU allowance reserved: ${number(usage.azure.reserved / 3600)} h. Shared AI credits remaining: ${number(usage.credits.remaining / 1000000)} / ${number(usage.credits.limit / 1000000)}. Provider billing may differ.` : "Service reservations appear after baseline initialization.";
+  renderCredits(data);
   const readiness = data.readiness;
   $("readiness").textContent = project.status === "missing" ? "Upload a project to begin setup." : project.status === "needs_attention" ? "Resolve the project issue above before starting." : readiness?.can_start ? "Ready to start the research loop." : readiness ? `Complete ${readiness.blockers.length} setup checks. Expand the checklist below for details.` : data.start_blocker;
   $("readiness-details").hidden = !readiness;
@@ -185,12 +195,24 @@ function changeText(score, reference, direction) {
   const delta = (score - reference) * (direction === "minimize" ? -1 : 1);
   return `${delta > 0 ? "+" : ""}${number(delta)}`;
 }
+function renderCredits(data) {
+  const guidance = data.live?.credits, usage = data.live?.usage?.credits;
+  $("credit-pool").hidden = !guidance || !usage;
+  if (!guidance || !usage) return;
+  const active = Boolean(data.run?.driver.active), stopped = data.live?.stopped;
+  badge($("credit-state"), stopped ? "Stopped" : active ? "In use" : guidance.needs_credits ? "Add credits or stop" : "Available", guidance.needs_credits && !active ? "warn" : "");
+  $("credit-balance").textContent = `${number(usage.spent / 1000000)} credits reported used · ${number(usage.held / 1000000)} reserved pending usage confirmation · ${number(guidance.remaining)} available · ${number(usage.limit / 1000000)} total allowance.`;
+  $("credit-guidance").textContent = active ? "The current Copilot session can use the remaining pool. Unused credits become available after its usage is confirmed." : guidance.needs_credits ? `Research is waiting. Add at least ${number(guidance.minimum_additional)} credits to make the next session possible, or stop the loop.` : "The remaining balance is shared by all future experiments. It is not divided into fixed amounts per experiment.";
+  $("credit-estimate").textContent = (guidance.estimated_additional !== null ? `Estimated additional allowance: ${number(guidance.estimated_additional)} credits. ` : "") + guidance.estimate_note + (guidance.usage_unconfirmed && !active ? " Some usage is unconfirmed; those reservations remain held." : "");
+  if (stopped) $("credit-guidance").textContent = "This loop has a saved stop request. Adding credits cannot restart it.";
+  $("additional-credits").placeholder = String(guidance.estimated_additional || guidance.minimum_additional || 30);
+}
 function renderRun(run) {
   const state = run.research_state, last = state.last_experiment;
   const active = run.driver.active, stopped = state.blocking_reasons.includes("HUMAN_STOP");
   badge($("loop-state"), stopped ? (active ? "Stopping" : "Stopped") : active ? "Running" : friendly(run.controller.state), active ? "active" : "");
   $("activity-title-text").textContent = `${last?.experiment_id || "Research loop"} · ${friendly(last?.state)}`;
-  $("activity-message").textContent = stopped ? "Stop recorded. No further experiments will start; submitted work can still be collected." : run.driver.error || run.controller.message || "The controller follows the saved objective and experiment limit.";
+  $("activity-message").textContent = stopped ? (run.driver.error || (active ? "Stopping Copilot and requesting cancellation of this loop's active Azure job. Waiting for confirmation." : "Loop stopped. No further research will start.")) : run.driver.error || run.controller.message || "The controller follows the saved objective and experiment limit.";
   $("hypothesis").hidden = !run.current_plan?.hypothesis;
   $("hypothesis").textContent = run.current_plan?.hypothesis || "";
   const preparation = run.last_preparation?.stage;
@@ -270,18 +292,19 @@ async function loadDetail(experimentId) {
     }
   } catch (exc) { if (version === detailVersion) $("detail-content").replaceChildren(node("p", exc.message, "detail-failure")); }
 }
-function uploadFolder(files, archive = false) {
+function uploadFolder(files, archive = false, expectedProject = "") {
   return new Promise((resolve, reject) => {
     const form = new FormData();
     for (const file of files) form.append("files", file, archive ? file.name : file.webkitRelativePath);
     const request = new XMLHttpRequest();
-    request.open("POST", `/api/onboarding/upload?archive=${archive}`); request.setRequestHeader("X-Research-Intern", "1");
+    const replacement = expectedProject ? `&replace=true&expected_project=${encodeURIComponent(expectedProject)}` : "";
+    request.open("POST", `/api/onboarding/upload?archive=${archive}${replacement}`); request.setRequestHeader("X-Research-Intern", "1");
     request.timeout = 1800000;
     request.upload.onprogress = event => { $("upload-status").textContent = event.lengthComputable ? `Uploading ${Math.round(event.loaded / event.total * 100)}%…` : "Uploading source files…"; };
     request.onload = () => {
       let result;
       try { result = JSON.parse(request.responseText); } catch { reject(new Error("The server returned an invalid upload response.")); return; }
-      if (request.status >= 200 && request.status < 300) resolve(result);
+      if (request.status >= 200 && request.status < 300) { resetProjectForm(); resolve(result); }
       else reject(new Error(typeof result.detail === "string" ? result.detail : "The folder could not be uploaded."));
     };
     request.onerror = () => reject(new Error("Upload connection lost. The project status will be checked again."));
@@ -290,8 +313,7 @@ function uploadFolder(files, archive = false) {
   });
 }
 $("upload").addEventListener("click", () => {
-  if (!("webkitdirectory" in $("folder-picker"))) { error("This browser does not support folder selection. Use a current desktop browser."); return; }
-  $("folder-picker").click();
+  selectProjectFile(false);
 });
 $("folder-picker").addEventListener("change", async event => {
   // The controller creates independent Git metadata; never upload local history,
@@ -303,7 +325,7 @@ $("folder-picker").addEventListener("change", async event => {
   if (files.length > 30000 || files.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 ** 3) { error("Retained project files exceed 2 GiB or 30,000 files. Use Azure data references for larger datasets."); return; }
   if (files.some(file => !file.webkitRelativePath)) { error("Select one folder with its relative file paths."); return; }
   busy = true; controls(); $("upload-status").textContent = "Uploading source files…";
-  try { await uploadFolder(files); $("upload-status").textContent = "Folder copied. Review its setup status before preparing."; dirtyBudget = false; }
+  try { await uploadFolder(files, false, event.target.dataset.expectedProject || ""); $("upload-status").textContent = "Folder copied. Review its setup status before preparing."; dirtyBudget = false; }
   catch (exc) { error(exc.message); $("upload-status").textContent = ""; }
   finally { try { await refresh(); } catch (exc) { error(exc.message); } busy = false; controls(); }
 });
@@ -343,6 +365,24 @@ async function action(kind) {
   finally { busy = false; controls(); }
 }
 $("start").addEventListener("click", () => action("start"));
+$("credit-stop").addEventListener("click", () => action("stop"));
+let creditRequest = null;
+$("credit-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (busy || !snapshot) return;
+  const amount = Number($("additional-credits").value);
+  if (!Number.isFinite(amount) || amount <= 0) { error("Enter a positive additional allowance."); return; }
+  const digest = snapshot.project.contract_sha256;
+  // Reuse the ID after an uncertain response; never double-add on retry.
+  if (!creditRequest || creditRequest.amount !== amount || creditRequest.digest !== digest)
+    creditRequest = {amount, digest, id: crypto.randomUUID()};
+  busy = true; controls(); error();
+  try {
+    await api("/api/project/credits", {additional_credits: amount, request_id: creditRequest.id, contract_sha256: digest});
+    creditRequest = null; $("additional-credits").value = ""; await refresh();
+  } catch (exc) { error(exc.message); }
+  finally { busy = false; controls(); }
+});
 async function connectProvider(provider, cancel = false) {
   if (busy) return;
   busy = true; controls(); error();

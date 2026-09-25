@@ -359,18 +359,18 @@ class LiveCopilotTests(ServiceFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.journal.usage()["reserved"], 1)
 
     async def test_native_credit_limit_is_reserved_before_session_and_retained_on_failure(self):
-        credits = ServiceJournal(self.root, service="copilot_credits", unit="microcredits", max_units=200000)
+        credits = ServiceJournal(self.root, service="copilot_credits", unit="microcredits", max_units=100000000)
         async def fail_turn(*args, **kwargs):
-            self.assertEqual(credits.usage()["reserved"], 200000)
+            self.assertEqual(credits.usage()["reserved"], 100000000)
             raise TimeoutError("Response lost")
         self.session.send_and_wait.side_effect = fail_turn
         with self.assertRaises(SpikeError):
-            await self.adapter(credit_journal=credits, credits_per_turn=0.2).run_iteration(self.context, self.repository)
-        self.assertEqual(self.client.create_session.call_args.kwargs["session_limits"], {"max_ai_credits": 0.2})
+            await self.adapter(credit_journal=credits).run_iteration(self.context, self.repository)
+        self.assertEqual(self.client.create_session.call_args.kwargs["session_limits"], {"max_ai_credits": 100})
         self.assertEqual(credits.usage()["remaining"], 0)
         self.assertIsNone(credits.usage()["actual_usage"])
-        with self.assertRaises(ServiceAdmissionError):
-            await self.adapter(credit_journal=credits, credits_per_turn=0.2).run_iteration(
+        with self.assertRaises(live.CopilotPaused):
+            await self.adapter(credit_journal=credits).run_iteration(
                 replace(self.context, attempt_number=2), self.repository)
         self.client.create_session.assert_awaited_once()
 

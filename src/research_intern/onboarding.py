@@ -14,6 +14,8 @@ from research_intern.execution.outputs import read_json, validate_tree
 from research_intern.workspace.discovery import ProjectImporter, metric_values
 from research_intern.workspace.paths import child_path
 from research_intern.workspace.recovery import atomic_bytes
+from research_intern.workspace.switching import project_identity, replace_project, resume_switch
+from research_intern.workspace.lock import RunLock
 
 TERMINAL = {"completed", "failed", "canceled", "cancelled", "notresponding"}
 
@@ -26,8 +28,10 @@ class Onboarding:
         self.cloud = cloud or AzureDiscovery(lambda: connections.providers.azure_credential)
         self.interval = poll_interval
         self._guard = threading.RLock()
+        self._poll_guard = threading.RLock()
         self._stop = threading.Event()
         self._thread = None
+        self._evaluation_preview = None
 
     def _read(self):
         path = self.root / "onboarding.json"
@@ -46,10 +50,36 @@ class Onboarding:
             state["import"] = read_json(metadata) if metadata.exists() else None
             state["configured"] = (self.root / "live.json").is_file()
             state["prepared"] = (self.root / "workspace.json").is_file()
+            state["project_id"] = project_identity(self.root)
+            if state["analysis"] and not state.get("evaluation_setup") and not state["configured"]:
+                # Older workspaces have no saved detection summary. Inspect once
+                # per selection, not on every dashboard event-stream refresh.
+                key = (state["project_id"], *(state.get(k) for k in ("job_config", "evaluation_file", "validation_file", "evaluation_command", "evaluation_metrics")))
+                if self._evaluation_preview is None or self._evaluation_preview[0] != key:
+                    self._discover_evaluation(state)
+                    self._evaluation_preview = (key, {k: state.get(k) for k in ("evaluation_setup", "evaluation_file", "validation_file")})
+                else:
+                    state.update(copy.deepcopy(self._evaluation_preview[1]))
+            environment = self.root / "scoring-environment.json"
+            state["scoring_environment"] = read_json(environment) if environment.is_file() else None
             return state
+
+    def _discover_evaluation(self, state):
+        from research_intern.workspace.autoscoring import discover
+        metadata = read_json(self.root / "project.json") if (self.root / "project.json").is_file() else {}
+        try:
+            plan = discover(self.root / "repository", self.root / "assets", state, metadata)
+            state["evaluation_setup"] = {k: v for k, v in plan.items() if k not in {"spec", "runtime", "code_roots"}}
+            if not state.get("evaluation_file") and plan.get("evaluator"):
+                state["evaluation_file"] = plan["evaluator"]
+            if not state.get("validation_file") and plan.get("reference"):
+                state["validation_file"] = plan["reference"]
+        except (SliceError, OSError, ValueError):
+            state["evaluation_setup"] = {"status": "needs_input", "message": "Select the project YAML to finish detecting evaluation inputs."}
 
     def scan(self):
         with self.mission.project_operation(), self._guard:
+            self._evaluation_preview = None
             analysis = self.importer.inspect()
             state = self._read()
             supported = [job for job in analysis["jobs"] if job["supported"]]
@@ -62,17 +92,31 @@ class Onboarding:
                 state["target"].setdefault("compute", compute)
             # Existing operator settings are hints, not a substitute for validation.
             draft = self.workspace / ".runtime/live-settings.draft.json"
-            if draft.is_file() and not state["target"].get("workspace_name"):
+            if state.get("use_legacy_hints", True) and draft.is_file() and not state["target"].get("workspace_name"):
                 for key, value in read_json(draft).get("azure", {}).items():
                     if key in {"subscription_id", "resource_group", "workspace_name", "compute"}:
                         state["target"].setdefault(key, value)
+            self._discover_evaluation(state)
             self._write(state)
         return self.snapshot()
 
-    def upload(self, files, *, archive=False):
-        with self.mission.project_operation():
-            self.importer.import_files(files, archive=archive)
+    def upload(self, files, *, archive=False, replace=False, expected_project=""):
+        with self.mission.project_operation(), self._poll_guard, self._guard:
+            if replace:
+                replace_project(self.workspace, files, archive=archive, expected_project=expected_project)
+                self.mission.project_replaced()
+                self.connections.project_replaced()
+            else:
+                self.importer.import_files(files, archive=archive)
         return self.scan()
+
+    def recover_project_switch(self):
+        if not (self.workspace / '.runtime/project-switch.pending.json').exists():
+            return
+        with self.mission.project_operation(), self._poll_guard, self._guard, RunLock(self.root):
+            if resume_switch(self.workspace):
+                self.mission.project_replaced()
+                self.connections.project_replaced()
 
     def save(self, values):
         from research_intern.workspace.project import LoopBudget
@@ -100,6 +144,7 @@ class Onboarding:
                         "existing_compatible", "existing_output"):
                 if key in values:
                     state[key] = values[key]
+            self._discover_evaluation(state)
             self._write(state)
         return self.snapshot()
 
@@ -122,12 +167,14 @@ class Onboarding:
         return self.snapshot()
 
     def find_jobs(self, *, experiment_name="", job_name=""):
-        state = self._read()
+        with self._guard:
+            state = self._read()
+            project = project_identity(self.root)
         selection(state["target"], require_workspace=True)
         result = self.cloud.jobs(state["target"], experiment_name, job_name)
         with self._guard:
             current = self._read()
-            if current["target"] != state["target"]:
+            if project_identity(self.root) != project or current["target"] != state["target"]:
                 raise SliceError("The selected Azure workspace changed. Search again")
             current["job_search"] = result
             self._write(current)
@@ -188,6 +235,10 @@ class Onboarding:
             self._stop.wait(self.interval)
 
     def poll_once(self):
+        with self._poll_guard:
+            return self._poll_once()
+
+    def _poll_once(self):
         with self._guard:
             state = self._read()
             previous = state.get("existing_run")
