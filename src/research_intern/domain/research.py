@@ -25,6 +25,7 @@ class ResearchSnapshot:
     max_experiments: int | None
     stop_requested: bool
     revision: int
+    mode: str = "simulated"
 
 
 def continuation_reasons(snapshot: ResearchSnapshot) -> tuple[str, ...]:

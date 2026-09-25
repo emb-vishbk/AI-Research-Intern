@@ -1,4 +1,4 @@
-"""AI Research Intern: offline research, localhost mission control, and an opt-in Copilot spike."""
+"""AI Research Intern: bounded live research, offline checks, and localhost mission control."""
 
 from __future__ import annotations
 
@@ -33,6 +33,13 @@ def main(argv: list[str] | None = None) -> int:
     subcommands = parser.add_subparsers(dest="command", required=True)
     readiness = subcommands.add_parser("readiness", help="Inspect local live-execution gates without service calls")
     readiness.add_argument("--json", action="store_true")
+    live_setup = subcommands.add_parser("configure-live", help="Bind reviewed live services to prepared source")
+    live_setup.add_argument("--config", type=Path, required=True)
+    live_setup.add_argument("--authorize-live", action="store_true", required=True)
+    for name in ("baseline", "start-live", "resume-live", "status-live", "stop-live", "report-live", "verify-services"):
+        command = subcommands.add_parser(name, help=f"{name} for the configured research project")
+        if name in ("baseline", "start-live", "resume-live", "verify-services"):
+            command.add_argument("--authorize-live", action="store_true", required=True)
     serve = subcommands.add_parser("serve", help="Open the local research workspace")
     serve.add_argument("--port", type=int, default=8000)
     from research_intern.execution.simulated import SCENARIOS
@@ -68,11 +75,42 @@ def main(argv: list[str] | None = None) -> int:
     spike.add_argument("--model", help="Optional model ID; otherwise use the runtime default")
     args = parser.parse_args(argv)
     workspace = Path(__file__).resolve().parents[2]
+    if args.command in ("configure-live", "baseline", "start-live", "resume-live", "status-live", "stop-live", "report-live", "verify-services"):
+        from research_intern.controller.mission import MissionControl
+        from research_intern.live import LiveProject
+        from research_intern.execution.outputs import read_json
+        try:
+            live = LiveProject(workspace)
+            if args.command == "configure-live":
+                live.configure(read_json(args.config), authorized=args.authorize_live)
+                print("Live settings bound to reviewed source. Run verify-services, then baseline.")
+            elif args.command == "verify-services":
+                print(json.dumps(asyncio.run(live.verify_services()), indent=2))
+            elif args.command in ("baseline", "start-live", "resume-live"):
+                if args.command == "baseline":
+                    if not live.inspect()["services_verified"]:
+                        raise ValueError("Run verify-services before baseline submission")
+                    live.initialize()
+                if args.command == "start-live" and not live.inspect()["baseline_accepted"]:
+                    raise ValueError("Measure and accept the baseline before starting candidates")
+                if args.command == "start-live":
+                    live.activate()
+                asyncio.run(live.run(baseline_only=True if args.command == "baseline" else None))
+            else:
+                mission = MissionControl(workspace)
+                operation = {"stop-live": mission.stop, "report-live": mission.report}.get(args.command, mission.status)
+                result = operation("live-project")
+                print(json.dumps(result, indent=2, allow_nan=False))
+            return 0
+        except Exception as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
     if args.command == "readiness":
         from research_intern.controller.readiness import project_readiness
         from research_intern.workspace.project import ProjectStore
 
-        result = project_readiness(ProjectStore(workspace).inspect())
+        from research_intern.live import LiveProject
+        result = project_readiness(ProjectStore(workspace).inspect(), LiveProject(workspace).inspect())
         if args.json:
             print(json.dumps(result, indent=2, allow_nan=False))
         else:

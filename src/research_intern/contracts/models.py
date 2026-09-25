@@ -83,6 +83,7 @@ class OutputPaths:
 class ExecutionConfig:
     backend: str
     job_config: str
+    native: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,7 @@ class ExperimentContract:
     budget: Budget
     version: str = "1.0"
     evaluation: EvaluationProtocol | None = None
+    goal: str = ""
 
     @property
     def protected_paths(self) -> tuple[str, ...]:
@@ -173,13 +175,19 @@ class ExperimentContract:
             "constraints": constraints,
             "budget": {key: value for key, value in asdict(self.budget).items() if value is not None},
         }
+        if not self.execution.native:
+            result["execution"].pop("native", None)
+        if self.goal:
+            result["goal"] = self.goal
         if self.evaluation is not None:
             result["evaluation"] = asdict(self.evaluation)
         return result
 
     @classmethod
     def from_dict(cls, value: object) -> ExperimentContract:
-        data = mapping(value, "contract", {"version", "objective", "execution", "outputs", "scope", "budget"}, {"constraints", "evaluation"})
+        data = mapping(value, "contract", {"version", "objective", "execution", "outputs", "scope", "budget"}, {"constraints", "evaluation", "goal"})
+        if not isinstance(data.get("goal", ""), str) or len(data.get("goal", "")) > 4000:
+            raise ContractError("The research goal must be text of at most 4,000 characters")
         if data["version"] != "1.0":
             raise ContractError('Only contract version "1.0" is supported')
         objective = mapping(data["objective"], "objective", {"metric", "direction"}, {"target"})
@@ -205,10 +213,12 @@ class ExperimentContract:
             rules = EvaluationRules(objective["metric"], objective["direction"], objective.get("target"), tuple(checks))
         except ValueError as exc:
             raise ContractError(str(exc)) from exc
-        execution = mapping(data["execution"], "execution", {"backend", "job_config"})
+        execution = mapping(data["execution"], "execution", {"backend", "job_config"}, {"native"})
         if execution["backend"] != "azure_ml":
             raise ContractError("The experiment contract supports only azure_ml; simulation is an application mode")
-        execution = ExecutionConfig("azure_ml", relative_path(execution["job_config"]))
+        if type(execution.get("native", False)) is not bool:
+            raise ContractError("execution.native must be a boolean")
+        execution = ExecutionConfig("azure_ml", relative_path(execution["job_config"]), execution.get("native", False))
         outputs = mapping(data["outputs"], "outputs", {"root"}, {"run", "metrics", "history", "logs", "artifacts"})
         outputs = OutputPaths(**outputs)
         budget = mapping(data["budget"], "budget", {"max_experiments"}, {"max_gpu_hours", "max_ai_credits"})
@@ -228,7 +238,7 @@ class ExperimentContract:
             if len({p.casefold() for p in paths[name]}) != len(paths[name]):
                 raise ContractError("Scope paths cannot contain duplicates")
         evaluation = EvaluationProtocol.from_dict(data["evaluation"]) if "evaluation" in data else None
-        contract = cls(rules, execution, outputs, Scope(**paths), Budget(**budget), evaluation=evaluation)
+        contract = cls(rules, execution, outputs, Scope(**paths), Budget(**budget), evaluation=evaluation, goal=data.get("goal", ""))
         for editable in contract.scope.editable:
             if not contract.allows(editable) or any(overlaps(editable, p) for p in contract.protected_paths):
                 raise ContractError("Editable paths overlap protected policy, execution, outputs, or researcher scope")

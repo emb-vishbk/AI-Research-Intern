@@ -77,7 +77,7 @@ class CandidateController:
             "Inspect the prepared selected-parent code and recorded evidence. Make one intervention "
             "only within the immutable contract's editable scope and return a concise CandidatePlan. "
             "Do not edit protected files, Git metadata, policy, budgets, or outputs. "
-            "Do not assign IDs, commit, execute experiments, or judge success. This is an offline mock iteration."
+            "Do not assign IDs, commit, execute experiments, or judge success."
         ))
         # Refuse unexpected work before allocating a preparation or moving HEAD.
         self.workspace.verify_clean()
@@ -103,7 +103,7 @@ class CandidateController:
                 raise HandoffBlocked("Research history or stop state changed before proposal generation")
             stage = "PROPOSER_FAILED"
             proposer = self.proposer_factory()
-            if proposer.backend != "simulated":
+            if proposer.backend != ("copilot" if self.ledger.mode == "live" else "simulated"):
                 raise HandoffBlocked("The candidate workflow does not enable live proposers")
             plan = await asyncio.wait_for(proposer.run_iteration(context, self.workspace.repository),
                                           timeout=self.timeout_seconds)
@@ -154,7 +154,7 @@ class CandidateController:
         commit, diff = checkpoint["git_commit"], checkpoint["diff"]
         plan = CandidatePlan(**checkpoint["plan"])
         attempt = child_path(self.ledger.root, "candidate_attempts", preparation.attempt_id)
-        evidence = {"mode": "simulated", "parent_commit": preparation.parent_commit, "git_commit": commit,
+        evidence = {"mode": self.ledger.mode, "parent_commit": preparation.parent_commit, "git_commit": commit,
                     "contract": self.ledger.contract.to_dict(), "plan": asdict(plan),
                     "validation": checkpoint["validation"], "attempt": attempt.relative_to(self.ledger.root).as_posix()}
         candidates = child_path(self.ledger.root, "candidates")

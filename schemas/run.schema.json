@@ -8,6 +8,7 @@
     "status": {"enum": ["completed", "failed"]},
     "experiment_id": {"type": "string", "pattern": "^EXP-[0-9]{3,}$"},
     "evaluation_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "source_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
     "parent_experiment": {
       "anyOf": [
         {"type": "null"},

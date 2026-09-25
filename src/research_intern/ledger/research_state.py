@@ -66,7 +66,7 @@ def build_research_state(snapshot: ResearchSnapshot, *, recent_limit: int = 5) -
     remaining = None if snapshot.max_experiments is None else max(snapshot.max_experiments - allocated, 0)
     reasons = continuation_reasons(snapshot)
     return ResearchState(
-        "1.0", "simulated", snapshot.revision, snapshot.rules,
+        "1.0", snapshot.mode, snapshot.revision, snapshot.rules,
         _summary(baseline) if baseline is not None else None,
         _summary(best) if best is not None else None,
         _summary(latest) if latest is not None else None,

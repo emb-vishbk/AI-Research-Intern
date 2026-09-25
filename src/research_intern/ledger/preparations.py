@@ -46,7 +46,7 @@ class PreparationJournal:
 
     def configure(self, *, max_attempts: int, scenario: str) -> None:
         validate_experiment_limit(max_attempts)
-        if scenario not in LOOP_SCENARIOS:
+        if scenario not in LOOP_SCENARIOS and not (scenario == "live" and self.ledger.mode == "live"):
             raise ValueError("Unknown offline loop scenario")
         policy = {"version": 1, "max_attempts": max_attempts, "scenario": scenario}
         with self.ledger._transaction():
@@ -64,7 +64,7 @@ class PreparationJournal:
             return None
         policy = json.loads(row[0])
         if (not isinstance(policy, dict) or set(policy) != {"version", "max_attempts", "scenario"}
-                or policy["version"] != 1 or policy["scenario"] not in LOOP_SCENARIOS):
+                or policy["version"] != 1 or policy["scenario"] not in (*LOOP_SCENARIOS, "live")):
             raise LedgerError("Invalid persisted offline loop policy")
         validate_experiment_limit(policy["max_attempts"])
         return policy

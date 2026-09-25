@@ -12,6 +12,12 @@ If a feature does not materially strengthen the MVP thesis, defer it.
 
 ## 2. MVP Thesis
 
+Implementation status (2026-09-17): the platform connects baseline measurement,
+bounded live coding/execution, independent evaluation, durable memory/recovery and
+browser controls. Offline service-fake tests verify this composition. The thesis
+below still requires a real approved multi-trial run demonstrating measured
+improvement; passing platform tests alone does not establish scientific success.
+
 The MVP must prove one claim:
 
 > An AI coding agent can autonomously improve an existing ML experiment through repeated, machine-evaluated, traceable experimentation.
@@ -309,7 +315,10 @@ VS Code remains the development environment; the browser acts as research missio
 
 Where practical, stream file reads, edits, validation, Git commits, Azure submission, waiting, collection, and evaluation to the UI.
 Raw private chain-of-thought is not required; persist structured observation, diagnosis, hypothesis, candidate, expected effect, result, and conclusion.
-Do not build GitHub OAuth for the local MVP; assume the user is already authenticated for Copilot locally.
+The localhost dashboard provides Azure and Copilot browser sign-in controls.
+Microsoft MSAL and the official Copilot CLI own provider authorization; there is
+no hosted OAuth application or multi-user account system. Sign-in checks are
+separate from approving service settings, measuring the baseline and starting research.
 The backend owns Azure credentials and never places secrets inside Copilot prompts.
 Expose narrow capabilities such as `submit_job()`, `get_job_status()`, and `collect_results()`.
 
@@ -323,8 +332,17 @@ Do not create dedicated PyTorch, TensorFlow, JAX, YOLO, or Transformers platform
 
 ## 27. Onboarding, Recovery, and Serial Execution
 
-Perfect arbitrary-repository onboarding is not required; the demo experiment may already satisfy the contract.
-A future Copilot bootstrap phase may adapt arbitrary repositories.
+The browser accepts an existing project folder or ZIP without requiring a hand-written
+contract or prescribed layout. Deterministic inspection finds Azure command YAML,
+candidate evaluators, validation references and saved JSON metrics; the researcher
+resolves ambiguity in labelled controls and states the goal, editable scope and limits.
+The app generates its internal contract only after this review. It does not guess an
+unfamiliar evaluator's arguments or invent scientific measurements.
+Azure discovery uses the signed-in identity with exact manual IDs/names as fallback.
+Existing jobs are explicitly selected, observed without Copilot, downloaded and
+independently re-scored. Historical source association is user-attested and reported.
+One-node command jobs with folder outputs are supported; pipelines/sweeps and universal
+framework or logging adapters remain outside this implementation.
 Persist enough state for completed history to survive restart: ledger records, Git commits, Azure job IDs, outputs, and current best.
 Run one experiment at a time; no parallel scheduling or simultaneous worktrees are required.
 Basic restart-aware recovery is desirable, while distributed fault tolerance is deferred.

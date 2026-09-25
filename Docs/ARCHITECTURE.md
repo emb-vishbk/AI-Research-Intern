@@ -208,10 +208,27 @@ The offline core loader now lives in `contracts/`; it validates versioned YAML,
 literal scope paths, output layout, constraints, and declared budget limits.
 SQLite binds the effective contract and dedicated repository before baseline import.
 Reopening cannot silently change either binding. Azure job YAML is checked locally
-as configuration data; Azure service validation and resource accounting remain pending.
-For the MVP, do not attempt perfect automatic interpretation of arbitrary repositories.
-The prepared demo experiment may already satisfy the contract.
-A future bootstrap agent can automate adaptation later.
+as configuration data; explicit live service verification checks approved Azure
+resources, and durable journals reserve compute/turn/credit allowances.
+`workspace/discovery.py` imports ordinary folders/ZIPs into a source copy and a
+separate asset store. `onboarding.py` persists reviewed project choices, selected
+Azure resources and existing-run observations. `execution/discovery.py` owns
+read-only Azure listing and download through the signed-in backend credential.
+`workspace/setup.py` generates the internal contract, frozen scoring adapter and
+service settings. Unknown evaluator arguments and ambiguous Azure resources are
+resolved through the UI, not guessed by the controller.
+
+The native command adapter preserves the selected YAML's environment, inputs and
+command, stages hashed assets at their original paths, and adds identity/output
+collection around the workload. A protected scorer recomputes objective metrics.
+The existing prepared-workload adapter remains available. Single-node GPU command
+jobs are supported; distributed jobs and pipelines are rejected before submission.
+
+An existing baseline can be adopted from downloaded artifacts without another
+Azure submission. Its receipt records the selected workspace/job, artifact hashes,
+and explicitly user-attested source association. This attestation is distinct from
+the exact Git snapshot enforced for all new submissions. The same frozen evaluator
+must score the historical artifacts before the baseline can seed research.
 
 ## 17. Git / Workspace Manager
 
@@ -291,8 +308,8 @@ The executor should work independently of Copilot.
 Simple polling is sufficient for the MVP.
 
 An opt-in implementation now exists in `execution/azure.py`, with a fake-service
-test seam and lazy Azure SDK imports. It supports the prepared workload's six
-identity/config/data inputs and named output, stages clean exact-commit source,
+test seam and lazy Azure SDK imports. It supports reviewed workload input bindings,
+three controller-owned identity inputs and one named output, stages clean exact-commit source,
 requires versioned assets and a digest-pinned image, and restricts operations to
 durably recorded job identities. `ledger/services.py` stores immutable allowances
 and submission intents in the run's SQLite database before service operations.
@@ -305,12 +322,19 @@ plan. It denies other permissions, configuration discovery and reasoning summari
 Turn reservations precede startup; interrupted attempts are not replayed. The full
 candidate diff still requires deterministic verification outside the adapter.
 
-These adapters are **not yet composed into the live research loop**. Existing
-simulation guards, ledger mode and browser Start restrictions remain. Live baseline
-acceptance, trusted scoring, admission/recovery composition and metering are pending.
-Reservations count turns or declared GPU-seconds, retain failed/ambiguous costs and
-do not claim actual usage or enforce provider billing caps. `controller/readiness.py`
-reports these missing capabilities explicitly; project settings cannot override them.
+`live.py` composes these adapters into the shared serial controller. Ledger mode
+is fixed at creation; old simulated databases remain readable and cannot be promoted.
+A live baseline is submitted from the reviewed original commit and independently
+scored before candidates may start. `evaluation/trusted.py` freezes protected scorer
+files, runs a separate reviewed Python process without candidate imports, and
+records identity/metric/source/artifact hashes. Self-reported training metrics are
+validated as output data but never decide live success.
+
+Reservations count verified GPU-seconds, coding turns and per-turn AI-credit ceilings.
+The SDK receives the experimental session credit limit. Failed/ambiguous operations
+retain reservations. Actual usage and provider billing are not inferred from these
+figures. `controller/readiness.py` reports setup gates, including measured baseline
+acceptance and fresh read-only Azure/Copilot verification.
 
 ## 21. Azure and Output Lifecycle
 
@@ -391,13 +415,13 @@ Together these stores must reconstruct any completed experiment.
 ## 27. FastAPI and Browser UI
 
 FastAPI is a thin local transport layer; route handlers call application services rather than contain research logic.
-The offline implementation uses `api/app.py`, `controller/mission.py`, and plain
+The implementation uses `api/app.py`, `controller/mission.py`, and plain
 HTML/CSS/JavaScript assets packaged under `api/static/`. `serve` binds to loopback;
 FastAPI and Uvicorn are optional web dependencies. Routes expose run creation,
 start/resume, persistent stop, rebuilt state, experiment details, and server-sent
 snapshots containing recent persisted ledger events. No LLM reasoning stream is used.
 
-One background thread runs the existing serial offline loop with its own SQLite
+One background thread runs the shared serial loop with its own SQLite
 connection. Request reads use independent connections. An OS lock allows one web
 server for the application workspace, while the existing per-run lock prevents a
 second CLI/web driver from mutating that run. No queue or distributed worker is added.
@@ -415,9 +439,15 @@ The prepared research source has one fixed handoff location:
 `.runtime/research-project/repository/`. `api/uploads.py` bounds multipart transport;
 `workspace/project.py` validates portable paths, stages files, checks the experiment
 contract when present and publishes into an empty project slot. A source upload
-without a contract remains available for review but cannot be prepared. Upload never
+without a contract remains available for review; onboarding generates its contract
+from the reviewed fields before preparation. Upload never
 executes source or replaces an existing project. Explicit local preparation creates
-the independent Git workspace. Evaluation confirmation binds the reviewed protocol
+the independent Git workspace. Before live configuration or ledger initialization,
+onboarding may revise a clean preparation using the researcher's reviewed choices.
+The prior source, Git history and receipts are archived in `preparation-history/`;
+a durable publication journal allows an interrupted replacement to resume. Unknown
+edits block replacement. Live configuration and initialized research remain immutable.
+Evaluation confirmation binds the reviewed protocol
 to that exact source commit and contract digest in application-owned `evaluation.json`. `controller/mission.py` serializes project changes and
 the web driver. The application-owned `settings.json` beside the repository stores
 draft budgets bound to the contract digest, preserving the researcher's original files.
@@ -428,13 +458,38 @@ paths are automatically protected. Result collection checks the protocol fingerp
 before passing structured metrics to the existing deterministic evaluator. This is
 consistency checking, not proof that the workload actually ran the trusted evaluator.
 
-Measured baseline import, live candidate execution and authoritative compute/credit
-accounting remain pending. Coding-agent integration is explicitly deferred pending
-the researcher's choice; local setup neither invokes nor selects an agent provider. Live start is blocked in both the UI and API; saved limits
-are not advertised as enforced budgets. Each offline run still owns its independent
-synthetic fixture. The independent ML project remains usable without the platform.
+Browser and CLI support live settings, read-only service checks, baseline measurement,
+start/resume/stop and JSON reports with complete scored lineage. Live settings are
+fixed for the run; draft budget settings must match the approved contract. Resource
+checks expire after 24 hours. Start requires a measured accepted baseline. The live
+phase is persisted, so resuming a baseline cannot silently start coding iterations.
+Each offline run retains its independent synthetic fixture. Real cloud/model
+acceptance remains an explicit configured run, not evidence supplied by offline tests.
+The independent ML project remains usable without the platform.
 There is no arbitrary filesystem-path API. Host/origin checks and same-origin mutation
 headers protect the local boundary; this is not a remote authenticated service.
+`connections.py` owns one cancellable provider-connection worker, serialized with
+project changes and research. The dashboard exposes Azure/Copilot sign-in, provider
+authorization links, safe connection status, cancellation and coding-model selection.
+The API never returns tokens or provider subprocess logs. Reads do not contact providers.
+An account change invalidates the previous service verification receipt.
+
+Azure browser sign-in uses MSAL device authorization and an in-process cache. The
+Azure execution adapter consumes that credential; CLI credentials remain a developer
+fallback. Silent refresh cannot open a browser during a research job. The default
+Azure SDK development client is for local testing; operators can configure their own
+registered client and tenant with RESEARCH_INTERN_AZURE_CLIENT_ID and
+RESEARCH_INTERN_AZURE_TENANT_ID.
+
+The explicit Copilot sign-in action provisions checksum-verified, SDK-matched helpers
+when needed. Windows/macOS use the provider's native credential manager and refuse
+plaintext fallback. Linux/WSL uses an owner-only directory on verified tmpfs shared
+memory for the app session, so no desktop keychain installation is required. The CLI
+and restricted SDK share that session directory. Normal shutdown removes it; abrupt
+process termination may leave the private volatile directory until host reboot.
+Restarted apps require another session sign-in. Existing legacy CLI caches are not
+migrated or deleted. These authentication changes never approve scientific policy,
+mutate a live model choice, create a model turn or submit an Azure job.
 The browser acts as research mission control.
 It shows objective, baseline, best experiment, budget usage, current activity, hypothesis, Azure status, history, code diff, metrics, decision, and conclusion.
 VS Code remains the primary coding environment.

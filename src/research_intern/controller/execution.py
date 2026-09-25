@@ -9,9 +9,12 @@ from research_intern.workspace.paths import child_path
 
 
 class ExecutionController:
-    def __init__(self, ledger: Ledger, executor: Executor):
-        if executor.backend != "simulated":
+    def __init__(self, ledger: Ledger, executor: Executor, *, verifier=None):
+        if executor.backend != ledger.backend:
             raise SliceError("This offline slice does not enable live execution adapters")
+        if ledger.mode == "live" and verifier is None:
+            raise SliceError("Live execution requires an independent trusted scorer")
+        self.verifier = verifier
         self.ledger = ledger
         self.executor = executor
 
@@ -82,14 +85,34 @@ class ExecutionController:
             return self.ledger.record_failure(experiment_id, "EXECUTION_FAILED", f"Job {status}")
         request = JobRequest(record.experiment_id, record.parent_experiment, record.git_commit)
         try:
-            result = collect_outputs(outputs, self.ledger.rules, request, self.ledger.output_paths,
-                                     evaluation_fingerprint=self.evaluation_fingerprint)
+            imported_baseline = request.experiment_id == "EXP-000" and (self.ledger.root / "imported-baseline.json").is_file()
+            if self.ledger.contract and (self.ledger.contract.execution.native or imported_baseline):
+                from research_intern.execution.outputs import read_json, validate_tree
+                validate_tree(outputs)
+                run = read_json(outputs / self.ledger.output_paths.run)
+                expected = {"experiment_id": request.experiment_id, "parent_experiment": request.parent_experiment,
+                            "source_commit": request.git_commit, "evaluation_fingerprint": self.evaluation_fingerprint}
+                if any(run.get(k) != v for k, v in expected.items()) or run.get("status") != "completed":
+                    raise OutputError("Job outputs do not match the submitted experiment and evaluation")
+                if self.verifier is None:
+                    raise OutputError("An independent evaluator is required for ordinary job outputs")
+            else:
+                result = collect_outputs(outputs, self.ledger.rules, request, self.ledger.output_paths,
+                                         evaluation_fingerprint=self.evaluation_fingerprint)
+            if self.verifier is not None:
+                result = self.verifier.verify(outputs, request, record.job_id)
         except RunFailedError as exc:
             return self.ledger.record_failure(experiment_id, "EXECUTION_FAILED", str(exc))
         except OutputError as exc:
             return self.ledger.record_failure(experiment_id, "OUTPUT_INVALID", str(exc))
         if record.parent_experiment is None:
-            raise SliceError("A candidate needs a persisted selected parent")
+            if record.experiment_id != "EXP-000" or self.ledger.mode != "live":
+                raise SliceError("A candidate needs a persisted selected parent")
+            try:
+                evaluation = evaluate_baseline(self.ledger.rules, result)
+            except EvaluationError as exc:
+                return self.ledger.record_failure(record.experiment_id, "BASELINE_INVALID", str(exc))
+            return self.ledger.record_result(record.experiment_id, result, evaluation)
         parent = self.ledger.get(record.parent_experiment)
         best = self.ledger.best()
         if parent.evaluation is None or best.evaluation is None:

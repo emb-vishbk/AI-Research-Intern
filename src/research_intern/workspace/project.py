@@ -42,10 +42,10 @@ class LoopBudget:
                 raise SliceError("Compute and credit limits must be finite, non-negative numbers")
 
 
-def source_paths(files: list[SourceFile]) -> tuple[str, list[str]]:
+def source_paths(files: list[SourceFile], *, max_files: int = MAX_UPLOAD_FILES) -> tuple[str, list[str]]:
     """Strip one selected folder; reject ambiguous paths on Windows and Linux."""
-    if not 1 <= len(files) <= MAX_UPLOAD_FILES:
-        raise SliceError(f"Select a source folder containing 1–{MAX_UPLOAD_FILES} files")
+    if not 1 <= len(files) <= max_files:
+        raise SliceError(f"Select a project containing 1–{max_files} files")
     folder = None
     paths = []
     entries: dict[str, tuple[str, bool]] = {}
@@ -89,7 +89,7 @@ class ProjectStore:
                   "contract_sha256": None, "workspace_prepared": False, "prepare_available": False,
                   "source_commit": None, "evaluation": None, "evaluation_status": "missing",
                   "evaluation_fingerprint": None,
-                  "message": "Upload your prepared ML source folder to get started."}
+                  "message": "Select your existing experiment folder or ZIP. The app will inspect its usual layout."}
         try:
             repository = child_path(self.workspace, PROJECT_PATH)
             if not repository.exists() or (repository.is_dir() and not any(repository.iterdir())):
@@ -99,7 +99,7 @@ class ProjectStore:
             if metadata.is_file():
                 result["name"] = read_json(metadata)["name"]
             if not child_path(repository, CONTRACT_PATH).exists():
-                result.update(status="needs_contract", message="Source uploaded. Define the objective and boundaries in .research_intern/contract.yaml before preparing the workspace.")
+                result.update(status="needs_contract", message="Project uploaded. Review the detected files and describe your research goal below.")
                 return result
             contract = load_contract(repository)
             digest = contract_digest(repository)
@@ -110,7 +110,17 @@ class ProjectStore:
                           evaluation=asdict(contract.evaluation) if contract.evaluation else None,
                           evaluation_status="unconfirmed" if contract.evaluation else "missing",
                           evaluation_fingerprint=contract.evaluation_fingerprint)
-            prepared = prepared_workspace(self.root(), repository)
+            # During a live run HEAD follows candidates. The original preparation
+            # receipt remains the baseline anchor; the live controller owns Git checks.
+            live = child_path(self.root(), "live.json")
+            if live.is_file():
+                prepared = read_json(child_path(self.root(), "workspace.json"))
+                config = read_json(live)
+                if prepared["contract_sha256"] != digest or config["source_commit"] != prepared["source_commit"]:
+                    raise SliceError("Live source preparation identity changed")
+                result["budget_saved"] = True
+            else:
+                prepared = prepared_workspace(self.root(), repository)
             result["prepare_available"] = prepared is None
             if prepared is not None:
                 result.update(workspace_prepared=True, source_commit=prepared["source_commit"],
@@ -143,6 +153,8 @@ class ProjectStore:
         root = self.root()
         root.mkdir(parents=True, exist_ok=True)
         with RunLock(root):
+            if child_path(root, "live.json").exists():
+                raise SliceError("The live baseline is fixed; preparation cannot replace it")
             prepare_source(root, child_path(root, "repository"), contract_sha256)
         return self.inspect()
 
@@ -168,6 +180,8 @@ class ProjectStore:
         root = self.root()
         root.mkdir(parents=True, exist_ok=True)
         with RunLock(root):
+            if child_path(root, "live.json").exists():
+                raise SliceError("Live limits are fixed; stop and finalize a new research setup to change them")
             project = self.inspect()
             if project["status"] != "contract_valid" or project["contract_sha256"] != contract_sha256:
                 raise SliceError("The project contract changed or is invalid. Reload it before saving the budget.")

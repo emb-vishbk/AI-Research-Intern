@@ -27,8 +27,8 @@ from research_intern.workspace.recovery import (
 
 class ResearchLoop:
     def __init__(self, candidates: CandidateController, execution: ExecutionController,
-                 *, emit: Callable[[str], None] = lambda message: None):
-        if candidates.ledger is not execution.ledger or not isinstance(execution.executor, SimulatedExecutor):
+                 *, emit: Callable[[str], None] = lambda message: None, admission=lambda: (), baseline_only=False):
+        if candidates.ledger is not execution.ledger or execution.executor.backend != candidates.ledger.backend:
             raise SliceError("The offline loop requires one shared ledger and a simulated executor")
         self.candidates, self.execution = candidates, execution
         self.ledger, self.workspace = candidates.ledger, candidates.workspace
@@ -37,6 +37,8 @@ class ResearchLoop:
         if self.policy is None:
             raise SliceError("This run has no persisted offline loop policy")
         self.emit = emit
+        self.admission = admission
+        self.baseline_only = baseline_only
 
     def _clear_stale_marker(self) -> None:
         marker = child_path(self.ledger.root, "candidate.lock")
@@ -124,6 +126,8 @@ class ResearchLoop:
                     request = JobRequest(record.experiment_id, record.parent_experiment, record.git_commit)
                     job_id = self.execution.executor.find_job(request)
                     if job_id is None:
+                        if self.ledger.mode == "live":
+                            raise SliceError("Azure submission remains unresolved; inspect the durable intent before retrying")
                         # Only the simulator can prove this from local durable job
                         # files. Do not resubmit an ambiguous real cloud request.
                         record = self.ledger.record_failure(record.experiment_id, "SUBMISSION_FAILED",
@@ -133,17 +137,21 @@ class ResearchLoop:
                         record = self.ledger.get(record.experiment_id)
                 else:
                     record = self.execution.advance(record.experiment_id)
-                self.emit(f"SIMULATED {record.experiment_id}: {record.state}" +
+                self.emit(f"{self.ledger.mode.upper()} {record.experiment_id}: {record.state}" +
                           (f" / {record.decision}" if record.decision else ""))
                 return True
             reasons = continuation_reasons(snapshot)
+            if self.baseline_only:
+                reasons = (*reasons, "BASELINE_PHASE_COMPLETE")
+            if not reasons:
+                reasons = tuple(self.admission())
             if not reasons and self.journal.count() >= self.policy["max_attempts"]:
                 reasons = ("PREPARATION_BUDGET_EXHAUSTED",)
             if reasons:
                 preparation = self.journal.latest()
                 # Preserve an interrupted unreserved commit for inspection. A
                 # normal completed run ends with the best recorded code checked out.
-                if preparation is None or preparation.stage in ("RESERVED", "RECOVERED"):
+                if "BASELINE_MISSING" not in reasons and (preparation is None or preparation.stage in ("RESERVED", "RECOVERED")):
                     best = self.ledger.best()
                     self.workspace.prepare_parent(best.git_commit, known_commits={r.git_commit for r in snapshot.experiments})
                 self.journal.note_loop("STOPPED", ", ".join(reasons))
@@ -196,7 +204,7 @@ def describe_run(ledger: Ledger) -> dict:
         raise SliceError("The selected directory is not an initialized offline loop run")
     preparation = journal.latest()
     count = journal.count()
-    return {"mode": "simulated", "run_directory": str(ledger.root),
+    return {"mode": ledger.mode, "run_directory": str(ledger.root),
             "controller": journal.loop_status(),
             "research_state": asdict(build_research_state(ledger.snapshot())),
             "preparation_budget": {"limit": policy["max_attempts"], "used": count,
@@ -204,4 +212,5 @@ def describe_run(ledger: Ledger) -> dict:
             "last_preparation": None if preparation is None else {
                 "attempt_id": preparation.attempt_id, "sequence": preparation.sequence, "stage": preparation.stage,
                 "failure_type": preparation.failure_type, "failure_message": preparation.failure_message},
-            "copilot_usage": 0, "azure_gpu_hours": 0}
+            "copilot_usage": 0 if ledger.mode == "simulated" else None,
+            "azure_gpu_hours": 0 if ledger.mode == "simulated" else None}

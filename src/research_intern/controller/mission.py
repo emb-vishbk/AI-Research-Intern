@@ -18,6 +18,7 @@ from research_intern.execution.outputs import read_json
 from research_intern.ledger.preparations import PreparationJournal
 from research_intern.ledger.sqlite import Ledger
 from research_intern.offline import compose_loop, initialize_run
+from research_intern.live import LiveProject
 from research_intern.workspace.paths import child_path
 from research_intern.workspace.project import LoopBudget, ProjectStore
 
@@ -53,12 +54,19 @@ class MissionControl:
         self._task: asyncio.Task | None = None
         self._errors: dict[str, str] = {}
         self.projects = ProjectStore(self.workspace)
+        self.live = LiveProject(self.workspace)
+        self._baseline_only = False
 
     def activity(self) -> dict:
         with self._guard:
             return {"active_run_id": self._active, "creating": self._creating}
 
     def directory(self, run_id: str) -> Path:
+        if run_id == "live-project":
+            root = self.live.root
+            if not root.is_dir() or not child_path(root, "ledger.sqlite3").is_file():
+                raise RunNotFound("The live baseline has not been initialized")
+            return root
         if not RUN_ID.fullmatch(run_id):
             raise RunNotFound("Unknown offline run")
         root = child_path(self.workspace, ".runtime", "simulations", run_id)
@@ -101,9 +109,12 @@ class MissionControl:
             active, changing = self._active, self._project_busy or self._creating
         run = None
         history_error = None
+        live = self.live.inspect()
         try:
             if active:
                 run = self.status(active)
+            elif live["initialized"]:
+                run = self.status("live-project")
             elif project["status"] == "missing":
                 root = child_path(self.workspace, ".runtime", "simulations")
                 directories = sorted((p for p in root.iterdir() if RUN_ID.fullmatch(p.name)),
@@ -112,14 +123,35 @@ class MissionControl:
                     run = self.status(directories[0].name)
         except (SliceError, OSError, ValueError, sqlite3.Error) as exc:
             history_error = str(exc)
-        readiness = project_readiness(project)
+        readiness = project_readiness(project, live)
         return {"project": project, "run": run, "changing": changing, "history_error": history_error,
+            "live": live, "can_measure_baseline": live["configured"] and live["services_verified"] and not live["initialized"],
             "can_start": readiness["can_start"], "readiness": readiness,
             "start_blocker": "Live research is blocked: " + " ".join(item["message"] for item in readiness["blockers"])}
 
-    def start_project(self) -> None:
-        # An upload or saved budget must never silently start a synthetic substitute.
-        raise MissionBusy(self.dashboard()["start_blocker"])
+    def start_project(self) -> dict:
+        status = self.dashboard()
+        if not status["can_start"]:
+            raise MissionBusy(status["start_blocker"])
+        self.live.activate()
+        return self.start("live-project")
+
+    def configure_live(self, settings: dict, *, authorized=False) -> dict:
+        with self.project_operation():
+            self.live.configure(settings, authorized=authorized)
+        return self.dashboard()
+
+    def measure_baseline(self) -> dict:
+        with self.project_operation():
+            if not self.live.inspect()["services_verified"]:
+                raise MissionBusy("Verify live services before submitting the baseline")
+            self.live.initialize()
+        return self.start("live-project", baseline_only=True)
+
+    def verify_live(self):
+        with self.project_operation():
+            asyncio.run(self.live.verify_services())
+        return self.dashboard()
 
     def create(self, *, max_experiments: int = 4, max_attempts: int | None = None,
                scenario: str = "mixed") -> dict:
@@ -140,6 +172,9 @@ class MissionControl:
         directories = sorted((p for p in root.iterdir() if RUN_ID.fullmatch(p.name)),
                              key=lambda p: p.lstat().st_mtime, reverse=True) if root.exists() else []
         rows = []
+        if self.live.inspect()["initialized"]:
+            status = self.status("live-project")
+            rows.append({key: status[key] for key in ("id", "controller", "research_state", "driver")})
         for directory in directories[:50]:
             try:
                 status = self.status(directory.name)
@@ -167,6 +202,11 @@ class MissionControl:
             result.update(id=run_id, experiments=experiments, events=ledger.recent_events(),
                           policy=journal.policy(), preparation_failures=journal.failures(),
                           current_plan=latest.checkpoint.get("plan") if latest else None)
+            if ledger.mode == "live":
+                result["service_usage"] = self.live.inspect()["usage"]
+                best = result["research_state"]["best_experiment"]
+                result["summary"] = {"best": best, "baseline": result["research_state"]["baseline"],
+                                     "experiments": len(records), "mode": "live"}
         with self._guard:
             result["driver"] = {"active": self._active == run_id, "active_run_id": self._active,
                                 "error": self._errors.get(run_id)}
@@ -182,14 +222,31 @@ class MissionControl:
             # crash in that gap leaves a valid record; resume republishes it.
             evidence = child_path(ledger.root, "experiments", experiment_id, "candidate.json")
             result["candidate"] = read_json(evidence) if evidence.is_file() else None
+            receipt = child_path(ledger.root, "experiments", experiment_id, "verified-score.json")
+            result["verified_score"] = read_json(receipt) if receipt.is_file() else None
             return result
 
-    def start(self, run_id: str) -> dict:
+    def report(self, run_id: str) -> dict:
+        """Export scientific lineage and scored evidence, without credentials."""
+        result = self.status(run_id)
+        result["report_version"] = 1
+        result["experiments"] = [self.experiment(run_id, row["experiment_id"]) for row in result["experiments"]]
+        if run_id == "live-project":
+            config = self.live.configuration()
+            result["provenance"] = {key: config[key] for key in (
+                "source_commit", "contract_sha256", "evaluation_fingerprint", "scorer_files")}
+            imported = self.live.root / "imported-baseline.json"
+            if imported.is_file():
+                result["provenance"]["imported_baseline"] = read_json(imported)
+        return result
+
+    def start(self, run_id: str, *, baseline_only=False) -> dict:
         self.status(run_id)  # Validate before scheduling any work.
         with self._guard:
             if self._active or self._creating or self._closing or self._project_busy:
-                raise MissionBusy("One offline run can be driven at a time")
+                raise MissionBusy("One research run can be driven at a time")
             self._active = run_id
+            self._baseline_only = baseline_only
             self._errors.pop(run_id, None)
             self._thread = threading.Thread(target=self._drive, args=(run_id,),
                                             name=f"research-{run_id}", daemon=False)
@@ -213,15 +270,18 @@ class MissionControl:
                 self._task = asyncio.current_task()
                 if self._closing:
                     return
-            with Ledger.reopen(self.directory(run_id)) as ledger:
-                await compose_loop(ledger, emit=log.info).run(poll_interval=self.poll_interval)
+            if run_id == "live-project":
+                await self.live.run(baseline_only=self._baseline_only, emit=log.info)
+            else:
+                with Ledger.reopen(self.directory(run_id)) as ledger:
+                    await compose_loop(ledger, emit=log.info).run(poll_interval=self.poll_interval)
 
         try:
             asyncio.run(drive())
         except asyncio.CancelledError:
             pass  # ResearchLoop persisted INTERRUPTED; shutdown is not human stop.
         except Exception as exc:
-            log.exception("Offline driver failed for %s", run_id)
+            log.exception("Research driver failed for %s", run_id)
             with self._guard:
                 self._errors[run_id] = str(exc) or type(exc).__name__
         finally:
@@ -245,4 +305,4 @@ class MissionControl:
         if thread is not None:
             thread.join(timeout=35)
             if thread.is_alive():
-                raise MissionBusy("The offline driver is still shutting down; inspect the server log")
+                raise MissionBusy("The research driver is still shutting down; inspect the server log")

@@ -33,7 +33,7 @@ class ServiceIntent:
 
 class ServiceJournal:
     def __init__(self, root: Path, *, service: str, unit: str, max_units: int):
-        if service not in ("azure", "copilot") or not unit or type(max_units) is not int or max_units < 0:
+        if service not in ("azure", "copilot", "copilot_credits") or not unit or type(max_units) is not int or max_units < 0:
             raise ServiceAdmissionError("Declare a supported service and non-negative integer allowance")
         self.service, self.unit, self.max_units = service, unit, max_units
         self.path = child_path(root, "ledger.sqlite3")

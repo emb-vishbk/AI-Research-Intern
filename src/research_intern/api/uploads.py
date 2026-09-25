@@ -29,7 +29,9 @@ class FolderParser(MultiPartParser):
 
 
 @asynccontextmanager
-async def folder_files(request: Request):
+async def folder_files(request: Request, *, max_bytes=None, max_files=None):
+    max_bytes = MAX_REQUEST_BYTES if max_bytes is None else max_bytes
+    max_files = MAX_UPLOAD_FILES if max_files is None else max_files
     if request.headers.get("content-type", "").split(";", 1)[0].strip() != "multipart/form-data":
         raise HTTPException(415, "Select a research folder to upload")
 
@@ -37,11 +39,11 @@ async def folder_files(request: Request):
         total = 0
         async for chunk in request.stream():
             total += len(chunk)
-            if total > MAX_REQUEST_BYTES:
-                raise HTTPException(413, "Source upload exceeds the 64 MiB limit")
+            if total > max_bytes:
+                raise HTTPException(413, "Project upload exceeds the allowed request size")
             yield chunk
 
-    parser = FolderParser(request.headers, bounded_stream(), max_files=MAX_UPLOAD_FILES, max_fields=0)
+    parser = FolderParser(request.headers, bounded_stream(), max_files=max_files, max_fields=0)
     try:
         form = await parser.parse()
         if not parser.complete:

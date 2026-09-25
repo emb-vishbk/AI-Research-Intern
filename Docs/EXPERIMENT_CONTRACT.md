@@ -12,6 +12,9 @@ If the contract is invalid, the research loop must not start.
 
 ## 2. Core Principle
 
+The implemented live scorer interface and resource bindings are specified in
+[Live scoring protocol](#live-scoring-protocol) at the end of this document.
+
 The researcher should be free to structure the internal experiment code however they prefer.
 The AI Research Intern should not require PyTorch-, TensorFlow-, Transformers-, YOLO-, or framework-specific project layouts.
 Instead:
@@ -946,3 +949,78 @@ The researcher keeps control over the scientific objective and boundaries.
 The experiment keeps freedom over its internal implementation.
 The Research Intern receives exactly enough structure to reason, modify, execute, evaluate, and repeat safely.
 The MVP should preserve this boundary even when shortcuts are taken elsewhere.
+
+## Live scoring protocol
+
+Live setup requires the evaluation section, explicit source preparation and human
+confirmation. Its fingerprint is the SHA-256 of an object containing the contract's
+`objective`, `constraints` and `evaluation`, encoded as sorted, compact ASCII-escaped
+JSON, as implemented by `ExperimentContract.evaluation_fingerprint`.
+Both baseline and candidate `run.json` must include the matching fingerprint and
+`source_commit`, in addition to the standard experiment/parent/status fields.
+`parent_experiment` is JSON null for EXP-000; the command input uses the string
+`none`, which the workload must convert when writing JSON.
+
+The protected command YAML declares `type: command`, a reviewed command, exactly
+the configured workload inputs plus `experiment_id`, `parent_experiment`,
+`source_commit`, and a single `experiment_outputs` output. The adapter supplies
+one compute instance, the approved environment and timeout. Other infrastructure
+fields in this template are not applied. Approved live configuration binds scalar
+inputs, versioned read-only Azure data assets or baseline/candidate source paths.
+
+The baseline is a new job from the prepared source commit, without a coding turn.
+Historical output imports cannot establish a live baseline. EXP-000 does not consume
+an autonomous experiment slot, but does reserve compute time. A failed or
+constraint-violating baseline prevents all candidate work.
+
+Training still writes the standard `run.json`, `metrics.json`,
+`metrics_history.json`, `logs/` and `artifacts/`. Self-reported numbers must satisfy
+that format, but the live controller replaces them with independently computed
+metrics for all scientific decisions.
+
+The researcher supplies a protected Python evaluator and declares every local
+helper/reference file it needs in `scoring.files`. The evaluator and split manifest
+are mandatory members. Each file is at most 16 MiB, with a 64 MiB bundle ceiling.
+Larger reference data must be accessible through the separately provisioned scoring
+environment and its reviewed protocol. No candidate file is added to this bundle.
+
+The controller invokes the frozen evaluator in a fresh local process:
+
+```text
+approved-python [isolated execution] evaluate.py
+    --outputs /absolute/path/to/downloaded/experiment_outputs
+    --request /absolute/path/to/request.json
+    --result /absolute/path/to/score.json
+```
+
+Request fields are `experiment_id`, `parent_experiment`, `git_commit`, `job_id`,
+`evaluation_fingerprint`, `objective` and `constraints`. The scorer must write:
+
+```json
+{
+  "identity": {
+    "experiment_id": "EXP-001",
+    "parent_experiment": "EXP-000",
+    "git_commit": "EXACT_SUBMITTED_40_HEX_COMMIT",
+    "job_id": "EXACT_CONTROLLER_JOB_NAME",
+    "evaluation_fingerprint": "EXACT_64_HEX_PROTOCOL_FINGERPRINT"
+  },
+  "metrics": {"YOUR_OBJECTIVE": 0.7, "YOUR_CONSTRAINT_METRIC": 12.0}
+}
+```
+
+Identity must match the request exactly. Every objective and constraint metric
+must be present and finite. The scorer must recompute from validated evidence or
+independently evaluate the model; merely copying `metrics.json` is not sufficient.
+Candidate code and unsafe serialized objects must not be executed by the scorer.
+
+Frozen source is checked before and after scoring; candidate imports and ambient
+credentials are excluded from the scorer process. Output-file hashes must remain
+unchanged. A verified receipt stores identity, metrics, scorer hashes and evidence
+hashes beside the outputs. Recovery accepts a cached receipt only if all these
+anchors still match. Failure, wrong identity, missing metrics, timeout or changed
+evidence prevents acceptance. This is process isolation, not an OS sandbox; the
+researcher remains responsible for scorer correctness and its installed dependencies.
+
+GPU and AI journals reserve upper allowances before service requests and retain
+them after failure. Reservations are not actual usage or provider invoice caps.

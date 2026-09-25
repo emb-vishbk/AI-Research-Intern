@@ -54,11 +54,17 @@ class Ledger:
             if row is None:
                 raise LedgerError("The existing ledger has no evaluation rules")
             data = json.loads(row[0])
+            mode = connection.execute("SELECT value FROM metadata WHERE key='mode'").fetchone()[0]
         data["constraints"] = tuple(Constraint(**item) for item in data["constraints"])
-        return cls(root, EvaluationRules(**data))
+        return cls(root, EvaluationRules(**data), mode=mode)
 
     def __init__(self, root: Path, rules: EvaluationRules, *, max_experiments: int | None = None,
-                 contract: ExperimentContract | None = None, repository: Path | None = None):
+                 contract: ExperimentContract | None = None, repository: Path | None = None,
+                 mode: str = "simulated"):
+        if mode not in ("simulated", "live"):
+            raise LedgerError("Unknown ledger mode")
+        self.mode = mode
+        self.backend = "azure_ml" if mode == "live" else "simulated"
         if contract is not None:
             contract = ExperimentContract.from_dict(contract.to_dict())
             if contract.rules != rules or max_experiments not in (None, contract.budget.max_experiments):
@@ -89,7 +95,7 @@ class Ledger:
                     hypothesis TEXT NOT NULL,
                     planned_intervention TEXT NOT NULL,
                     diff TEXT NOT NULL,
-                    backend TEXT NOT NULL CHECK (backend = 'simulated'),
+                    backend TEXT NOT NULL CHECK (backend IN ('simulated', 'azure_ml')),
                     state TEXT NOT NULL,
                     job_id TEXT UNIQUE,
                     job_status TEXT,
@@ -113,7 +119,7 @@ class Ledger:
                 );
             """)
             with self._transaction():
-                for key, value in (("schema_version", "1"), ("mode", "simulated"),
+                for key, value in (("schema_version", "1"), ("mode", mode),
                                    ("evaluation_rules", encode(asdict(rules)))):
                     self._db.execute("INSERT OR IGNORE INTO metadata VALUES (?, ?)", (key, value))
                     if self._db.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()[0] != value:
@@ -225,7 +231,7 @@ class Ledger:
             raise LedgerError("Invalid persisted stop request")
         revision = self._db.execute("SELECT COALESCE(MAX(sequence), 0) FROM events").fetchone()[0]
         return ResearchSnapshot(self.rules, tuple(self.history()), self._experiment_limit(),
-                                stopped is not None, revision)
+                                stopped is not None, revision, self.mode)
 
     def snapshot(self) -> ResearchSnapshot:
         """Read history and control metadata from the same SQLite transaction."""
@@ -271,6 +277,8 @@ class Ledger:
             raise LedgerError("Evidence must remain inside this ledger's directory") from exc
 
     def import_baseline(self, commit: str, result: CollectedResult, evaluation: Evaluation) -> ExperimentRecord:
+        if self.mode == "live":
+            raise LedgerError("Live baselines must be executed and independently scored by the controller")
         _check_commit(commit)
         path = self._relative_outputs(self.outputs("EXP-000"))
         if not evaluation.constraints_satisfied or evaluation.decision not in ("KEEP", "GOAL_REACHED"):
@@ -288,6 +296,27 @@ class Ledger:
                           '', 'simulated', 'RECORDED', ?, ?, ?, ?, ?, ?, ?)
             """, (commit, evaluation.decision, result.score, encode(asdict(evaluation)),
                   encode(result.metrics), path, timestamp, timestamp))
+            self._event("EXP-000")
+        return self.get("EXP-000")
+
+    def reserve_baseline(self, commit: str) -> ExperimentRecord:
+        """Persist a fresh measured baseline before any Azure request."""
+        _check_commit(commit)
+        if self.mode != "live" or self.contract is None:
+            raise LedgerError("Measured baseline requires a live contract")
+        with self._transaction():
+            existing = self._db.execute("SELECT 1 FROM experiments LIMIT 1").fetchone()
+            if existing:
+                record = self.get("EXP-000")
+                if record.git_commit != commit:
+                    raise LedgerError("Baseline source cannot change")
+                return record
+            timestamp = _now()
+            self._db.execute("""INSERT INTO experiments
+                (experiment_id, sequence, git_commit, hypothesis, planned_intervention,
+                 diff, backend, state, created_at, updated_at)
+                VALUES ('EXP-000', 0, ?, 'Measured baseline', 'Execute approved source',
+                        '', 'azure_ml', 'PREPARED', ?, ?)""", (commit, timestamp, timestamp))
             self._event("EXP-000")
         return self.get("EXP-000")
 
@@ -321,9 +350,9 @@ class Ledger:
                 INSERT INTO experiments (
                     experiment_id, sequence, parent_experiment, parent_commit, git_commit,
                     hypothesis, planned_intervention, diff, backend, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'simulated', 'PREPARED', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREPARED', ?, ?)
             """, (experiment_id, number, parent.experiment_id, parent.git_commit, candidate.git_commit,
-                  candidate.hypothesis, candidate.planned_intervention, candidate.diff, timestamp, timestamp))
+                  candidate.hypothesis, candidate.planned_intervention, candidate.diff, self.backend, timestamp, timestamp))
             self._event(experiment_id)
             if preparation_id is not None:
                 self._db.execute("UPDATE preparations SET stage = 'RESERVED', experiment_id = ?, updated_at = ? WHERE attempt_id = ?",
@@ -357,8 +386,20 @@ class Ledger:
             self._event(experiment_id)
 
     def record_job(self, experiment_id: str, job_id: str) -> None:
-        if not job_id or not job_id.startswith("simulated-"):
-            raise LedgerError("This slice accepts only explicitly simulated job IDs")
+        pattern = r"ri-azure-[a-f0-9]{32}" if self.mode == "live" else r"simulated-.+"
+        imported = False
+        receipt = self.root / "imported-baseline.json"
+        if self.mode == "live" and experiment_id == "EXP-000" and receipt.is_file():
+            from research_intern.execution.outputs import read_json
+            origin = read_json(receipt)
+            imported = (origin.get("source_association") == "user_attested"
+                        and origin.get("job", {}).get("name") == job_id
+                        and origin.get("job", {}).get("status", "").lower() == "completed"
+                        and origin.get("associated_source_commit") == self.get(experiment_id).git_commit
+                        and origin.get("evaluation_fingerprint") == self.contract.evaluation_fingerprint
+                        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.()-]{0,199}", job_id or ""))
+        if not imported and (not job_id or not re.fullmatch(pattern, job_id)):
+            raise LedgerError("Job identity does not match this ledger's backend")
         self._update(experiment_id, ("SUBMITTING",), state="SUBMITTED", job_id=job_id)
 
     def record_status(self, experiment_id: str, status: str) -> None:

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Research workspace · AI Research Intern</title>
   <link rel="stylesheet" href="/assets/app.css">
+  <link rel="stylesheet" href="/assets/onboarding.css">
+  <script src="/assets/onboarding.js" defer></script>
   <script src="/assets/app.js" defer></script>
 </head>
 <body>
@@ -19,14 +21,47 @@
       <div class="actions"><button id="resume" class="secondary" hidden>Resume loop</button><button id="stop" class="secondary" hidden>Stop loop</button><button id="start" class="primary" disabled aria-describedby="readiness">Start loop <span aria-hidden="true">↗</span></button></div>
     </div>
     <div id="error" class="notice error" role="alert" hidden></div>
+    <section class="connections-section" aria-labelledby="connections-title">
+      <div class="section-heading"><h2 id="connections-title">Connect your accounts</h2><span class="fine-print">Sign in before starting research</span></div>
+      <p class="helper">Connect Azure for training and GitHub Copilot for code improvements. Sign-in does not start research or use your experiment budget.</p>
+      <div class="connections-grid">
+        <article class="provider-card" aria-labelledby="azure-title">
+          <div class="section-heading"><h3 id="azure-title">Azure</h3><span id="azure-status" class="badge">Not connected</span></div>
+          <p id="azure-message" class="helper" role="status">Sign in with your Microsoft work account.</p>
+          <button id="azure-signin" class="secondary">Sign in to Azure</button>
+          <button id="azure-cancel" class="secondary compact" hidden>Cancel sign-in</button>
+          <div id="azure-challenge" class="provider-challenge" hidden>
+            <p id="azure-code-label" class="helper" hidden>Enter this one-time code: <strong id="azure-code"></strong> <button id="azure-copy" class="secondary compact" type="button">Copy code</button></p>
+            <a id="azure-authorize" class="provider-link" target="_blank" rel="noopener noreferrer">Continue with Microsoft ↗</a>
+          </div>
+          <p id="azure-storage" class="fine-print"></p>
+        </article>
+        <article class="provider-card" aria-labelledby="copilot-title">
+          <div class="section-heading"><h3 id="copilot-title">GitHub Copilot</h3><span id="copilot-status" class="badge">Not connected</span></div>
+          <p id="copilot-message" class="helper" role="status">Sign in with the GitHub account that has Copilot access.</p>
+          <button id="copilot-signin" class="secondary">Sign in to Copilot</button>
+          <button id="copilot-cancel" class="secondary compact" hidden>Cancel sign-in</button>
+          <details class="provider-options"><summary>Optional: custom GitHub Enterprise hostname</summary><label for="copilot-host">Enterprise hostname</label><input id="copilot-host" type="text" placeholder="your-enterprise.ghe.com" autocomplete="off" spellcheck="false"><p class="fine-print">Normal GitHub accounts use github.com. Leave this blank.</p></details>
+          <div id="copilot-challenge" class="provider-challenge" hidden>
+            <p id="copilot-code-label" class="helper" hidden>Enter this one-time code: <strong id="copilot-code"></strong></p>
+            <a id="copilot-authorize" class="provider-link" target="_blank" rel="noopener noreferrer">Continue with GitHub ↗</a>
+          </div>
+          <div id="copilot-model-field" class="provider-model" hidden><label for="copilot-model">Coding model</label><select id="copilot-model"><option value="">Choose a model</option></select><button id="copilot-save-model" class="secondary compact">Save model</button></div>
+          <p id="copilot-storage" class="fine-print">On Linux/WSL, this connection lasts for the current app session. No keychain setup is required.</p>
+        </article>
+      </div>
+    </section>
     <section class="setup" aria-label="Research setup">
       <div class="project-section">
         <div class="section-heading"><h2>Research project</h2><span id="project-state" class="badge">Not loaded</span></div>
         <p id="project-name" class="project-name">Your next research project</p>
-        <p id="project-message" class="helper">Upload your prepared ML source folder to get started.</p>
+        <p id="project-message" class="helper">Select your existing experiment folder or upload a ZIP. Keep your usual project layout.</p>
         <input id="folder-picker" type="file" webkitdirectory multiple hidden aria-label="Choose research folder">
         <button id="upload" class="secondary upload-button" disabled><span aria-hidden="true">↑</span> Upload research folder</button>
-        <p id="upload-note" class="fine-print">Source files, including .research_intern when available. Git history is excluded. Keep credentials, datasets, weights and environments separate. Up to 64 MiB / 2,000 files.</p>
+        <input id="zip-picker" type="file" accept=".zip,application/zip" hidden aria-label="Choose project ZIP">
+        <button id="upload-zip" class="secondary upload-button">Upload ZIP</button>
+        <button id="inspect-project" class="secondary upload-button" hidden>Inspect this project</button>
+        <p id="upload-note" class="fine-print">Your original files stay unchanged. Environments, caches and known credential files are excluded. Data, weights and previous results are kept separately from editable source. Up to 2 GiB / 30,000 retained files, including 64 MiB of source.</p>
         <p id="upload-status" class="helper" role="status"></p>
         <p id="objective" class="objective" hidden></p>
         <button id="prepare-project" class="secondary upload-button" hidden>Prepare local workspace</button>
@@ -46,9 +81,80 @@
         <p id="usage" class="fine-print">Compute and credit usage will appear when live metering is connected.</p>
       </form>
     </section>
+    <section id="project-discovery" class="evaluation-section" hidden aria-labelledby="discovery-title">
+      <div class="section-heading"><h2 id="discovery-title">Your project and research goal</h2><span id="discovery-state" class="badge">Review detected settings</span></div>
+      <p id="discovery-summary" class="helper"></p>
+      <form id="project-choices">
+        <label for="research-goal">What would you like to improve?</label>
+        <textarea id="research-goal" rows="3" maxlength="4000" required placeholder="Improve pedestrian detection mAP on Penn-Fudan. Keep Faster R-CNN and the validation split unchanged, and work within my budget."></textarea>
+        <div class="discovery-grid">
+          <label>Azure job YAML<select id="job-config" required></select></label>
+          <label>Objective metric<input id="goal-metric" list="metric-options" placeholder="For example: val_map_50_95" required><datalist id="metric-options"></datalist></label>
+          <label>Better results mean<select id="goal-direction"><option value="maximize">Higher metric value</option><option value="minimize">Lower metric value</option></select></label>
+        </div>
+        <details open><summary>Evaluation and permitted changes</summary>
+          <p class="fine-print">Review the detected evaluation script and validation reference. They will stay fixed while the Intern changes the selected training files.</p>
+          <div class="discovery-grid">
+            <label>Evaluation script<select id="evaluation-file"></select></label>
+            <label>Validation split or reference file<select id="validation-file"></select></label>
+            <label>Files the Intern may change<select id="editable-files" multiple size="6"></select></label>
+          </div>
+          <label>Existing evaluation command, if needed<input id="evaluation-command" placeholder="python evaluation.py --predictions {outputs}/predictions.json --output {result}"></label>
+          <p class="fine-print">Use your existing evaluator's command. {outputs} points to collected results and {result} is the JSON metrics file to write. Leave blank for an evaluator the app already recognizes.</p>
+          <details><summary>Additional evaluation and run settings</summary>
+            <div class="discovery-grid">
+              <label>Evaluation metrics file<input id="evaluation-metrics" value="metrics.json" placeholder="Relative path written by your evaluator"></label>
+              <label>Scoring Python interpreter (optional)<input id="scoring-python" placeholder="Uses the app's Python unless you specify another installed interpreter"></label>
+              <label>Maximum seconds per Azure job<input id="job-timeout" type="number" min="1" max="86400" value="3600"></label>
+            </div>
+            <label>Constraints, one per line<textarea id="research-constraints" rows="2" placeholder="latency_ms &lt;= 100&#10;peak_gpu_memory_mb &lt;= 12000"></textarea></label>
+          </details>
+        </details>
+        <button id="save-project-choices" class="secondary" type="submit">Save goal and project choices</button>
+        <p id="choices-status" class="helper" role="status"></p>
+      </form>
+    </section>
+    <section id="azure-discovery" class="evaluation-section" hidden aria-labelledby="azure-discovery-title">
+      <div class="section-heading"><h2 id="azure-discovery-title">Azure workspace and existing experiment</h2><span id="azure-target-state" class="badge">Choose resources</span></div>
+      <p class="helper">Load resources from your signed-in Azure account, or enter the exact values below. Each list depends on the selections before it.</p>
+      <div class="discovery-grid">
+        <label>Azure subscription ID<input id="target-subscription_id" list="subscriptions-list" placeholder="12345678-1234-1234-1234-123456789abc"><datalist id="subscriptions-list"></datalist><button class="secondary compact resource-load" data-kind="subscriptions" type="button">Load subscriptions</button></label>
+        <label>Azure resource group name<input id="target-resource_group" list="resource_groups-list" placeholder="For example: my-research-rg"><datalist id="resource_groups-list"></datalist><button class="secondary compact resource-load" data-kind="resource_groups" type="button">Load resource groups</button></label>
+        <label>Azure ML workspace name<input id="target-workspace_name" list="workspaces-list" placeholder="For example: my-research-workspace"><datalist id="workspaces-list"></datalist><button class="secondary compact resource-load" data-kind="workspaces" type="button">Load workspaces</button></label>
+        <label>Azure ML compute name<input id="target-compute" list="computes-list" placeholder="For example: gpu-cluster"><datalist id="computes-list"></datalist><button class="secondary compact resource-load" data-kind="computes" type="button">Load compute</button></label>
+      </div>
+      <button id="validate-target" class="secondary">Validate selected resources</button>
+      <p id="resource-status" class="helper" role="status"></p>
+      <div class="discovery-grid">
+        <label>Azure experiment name<input id="existing-experiment" placeholder="Detected from the YAML when available"></label>
+        <label>Azure ML job name / run ID (optional)<input id="existing-job-id" placeholder="Enter an exact run ID to find it directly"></label>
+      </div>
+      <button id="find-existing-jobs" class="secondary">Find existing jobs</button>
+      <label for="existing-jobs">Matching Azure jobs</label><select id="existing-jobs"><option value="">Find a job, or start with a new baseline</option></select>
+      <button id="select-existing-job" class="secondary">Use this existing run</button>
+      <button id="choose-new-baseline" class="secondary">Run a new baseline instead</button>
+      <p id="existing-job-status" class="helper" role="status"></p>
+      <div id="existing-job-evidence" class="fine-print"></div>
+      <div id="existing-compatibility" hidden>
+        <label><input id="existing-compatible" type="checkbox"> This run used the uploaded source and the same validation data. I want its saved predictions or checkpoint re-scored as the baseline.</label>
+        <label>Results folder within the download (only if there are multiple outputs)<input id="existing-output" placeholder="For example: named-outputs/outputs"></label>
+        <p class="fine-print">The app records this as your confirmation of the source association; it does not claim to have verified the historical code. Existing training costs are outside this new research budget.</p>
+      </div>
+      <label><input id="setup-approved" type="checkbox"> I have reviewed the objective, fixed evaluation, editable files, Azure target and budget.</label>
+      <button id="prepare-discovered" class="primary">Prepare research</button>
+      <p id="prepare-status" class="helper" role="status"></p>
+    </section>
     <p id="readiness" class="readiness" role="status">Upload a project, then configure the loop budget.</p>
+    <section id="live-setup" class="evaluation-section" aria-labelledby="live-title" hidden>
+      <div class="section-heading"><h2 id="live-title">Research execution</h2><span id="live-state" class="badge">Not configured</span></div>
+      <p class="helper">Connect Azure for training, Copilot for code improvements, and the evaluator for scoring.</p>
+      <p class="fine-print">Prepare research above, check the connections, then establish the baseline. Your organization may require SSO or MFA.</p>
+      <button id="verify-live" class="secondary" hidden>Retry connection check</button>
+      <button id="measure-baseline" class="secondary" hidden>Measure baseline</button>
+      <p id="live-message" class="helper" role="status"></p>
+    </section>
     <details id="readiness-details" class="readiness" hidden>
-      <summary>Live execution checklist</summary>
+      <summary>Research readiness</summary>
       <ul id="readiness-checks"></ul>
     </details>
     <section id="evaluation-section" class="evaluation-section" aria-labelledby="evaluation-title" hidden>
@@ -65,7 +171,7 @@
       <ol id="stages" class="stages" aria-label="Experiment lifecycle"><li data-stage="preparing">Prepare</li><li data-stage="validating">Validate</li><li data-stage="queued">Queue</li><li data-stage="training">Train</li><li data-stage="evaluating">Evaluate</li><li data-stage="recording">Record</li></ol>
     </section>
     <section class="results-section" aria-labelledby="results-title">
-      <div class="section-heading"><div class="results-heading"><h2 id="results-title">Experiments</h2><span id="history-kind" class="badge" hidden>Saved simulation</span></div><span id="experiment-count" class="fine-print">No experiments yet</span></div>
+      <div class="section-heading"><div class="results-heading"><h2 id="results-title">Experiments</h2><span id="history-kind" class="badge" hidden>Saved simulation</span></div><span id="experiment-count" class="fine-print">No experiments yet</span><button id="export-report" class="secondary compact" hidden>Download report</button></div>
       <p id="history-note" class="helper" hidden></p>
       <div class="score-summary"><div><span>Baseline</span><strong id="baseline">—</strong></div><div><span>Best score</span><strong id="best">—</strong></div><div><span>Improvement</span><strong id="improvement">—</strong></div></div>
       <div class="table-scroll"><table><thead><tr><th scope="col">Experiment</th><th scope="col">Change</th><th scope="col">Score</th><th scope="col">Decision</th></tr></thead><tbody id="experiments"></tbody></table></div>

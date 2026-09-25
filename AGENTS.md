@@ -154,21 +154,14 @@ Surface them before introducing architectural changes.
 
 ## 7. Current Project State
 
-The project is at the beginning of implementation.
+The modular monolith includes a shared live/offline serial controller, restricted
+Copilot editing, Azure execution/recovery, measured baseline, independent scoring,
+service reservations, SQLite/Git memory and a localhost browser UI.
 
-Current state:
-
-```text
-clean project directory
-+
-Python virtual environment created
-+
-github-copilot-sdk installed
-```
-
-No external repository is being used as the application base.
-
-No substantial MVP implementation should be assumed to exist yet.
+See README.md and current_state.md for implemented entry points and the offline
+test runner. Historical milestone instructions below describe the build sequence,
+not missing work. A real configured multi-trial cloud demonstration remains an
+external acceptance check; ordinary tests must continue to use fake services.
 
 Inspect the repository before every implementation task.
 
@@ -1115,8 +1108,8 @@ Do not implement:
 
 ```text
 multi-user tenancy
-GitHub OAuth
-organization authentication
+hosted OAuth account systems
+custom organization authentication
 RBAC
 remote hosted backend
 distributed scheduling
@@ -1364,15 +1357,10 @@ Do not spend the hackathon rebuilding existing development tools or infrastructu
 
 ## 68. Immediate Development Direction
 
-At the current project state, the next code should prove the smallest Copilot SDK interaction.
-
-Do not start by generating the entire repository implementation.
-
-Create only enough structure to establish the Python package and execute one controlled Copilot session.
-
-Once that works, convert the spike into the Copilot adapter.
-
-Then proceed milestone by milestone according to `ARCHITECTURE.md`.
+Continue from the implemented vertical loop. Inspect the current source and test
+results, preserve its deterministic boundaries and fix demonstrated gaps. Real
+service acceptance requires an approved workload, authentication and numeric limits;
+do not invent these or turn fake-service tests into paid integration tests.
 
 ---
 

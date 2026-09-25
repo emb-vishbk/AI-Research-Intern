@@ -20,6 +20,7 @@
   },
   "properties": {
     "version": {"const": "1.0"},
+    "goal": {"type": "string", "maxLength": 4000},
     "objective": {
       "type": "object", "additionalProperties": false,
       "required": ["metric", "direction"],
@@ -34,7 +35,8 @@
       "required": ["backend", "job_config"],
       "properties": {
         "backend": {"const": "azure_ml"},
-        "job_config": {"$ref": "#/$defs/path"}
+        "job_config": {"$ref": "#/$defs/path"},
+        "native": {"type": "boolean", "default": false}
       }
     },
     "outputs": {

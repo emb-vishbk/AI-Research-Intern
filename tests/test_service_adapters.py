@@ -358,6 +358,27 @@ class LiveCopilotTests(ServiceFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.repository / "train.py").read_bytes(), b"RATE = 0.05\n")
         self.assertEqual(self.journal.usage()["reserved"], 1)
 
+    async def test_native_credit_limit_is_reserved_before_session_and_retained_on_failure(self):
+        credits = ServiceJournal(self.root, service="copilot_credits", unit="microcredits", max_units=200000)
+        async def fail_turn(*args, **kwargs):
+            self.assertEqual(credits.usage()["reserved"], 200000)
+            raise TimeoutError("Response lost")
+        self.session.send_and_wait.side_effect = fail_turn
+        with self.assertRaises(SpikeError):
+            await self.adapter(credit_journal=credits, credits_per_turn=0.2).run_iteration(self.context, self.repository)
+        self.assertEqual(self.client.create_session.call_args.kwargs["session_limits"], {"max_ai_credits": 0.2})
+        self.assertEqual(credits.usage()["remaining"], 0)
+        self.assertIsNone(credits.usage()["actual_usage"])
+        with self.assertRaises(ServiceAdmissionError):
+            await self.adapter(credit_journal=credits, credits_per_turn=0.2).run_iteration(
+                replace(self.context, attempt_number=2), self.repository)
+        self.client.create_session.assert_awaited_once()
+
+    async def test_authentication_check_does_not_create_a_model_session(self):
+        self.assertTrue(await live.check_authentication(self.root, self.runtime))
+        self.client.create_session.assert_not_awaited()
+        self.client.stop.assert_awaited_once()
+
     async def test_failed_attempt_is_never_replayed_and_simulation_is_not_live_evidence(self):
         self.client.start.side_effect = TimeoutError("ambiguous startup")
         with self.assertRaises(SpikeError):

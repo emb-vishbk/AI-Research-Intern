@@ -6,6 +6,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -16,6 +17,72 @@ from research_intern.validation.preflight import validate_files
 from research_intern.workspace.git import GitWorkspace, WorkspaceError, snapshot_tree
 from research_intern.workspace.paths import child_path
 from research_intern.workspace.recovery import atomic_bytes
+
+
+def require_draft(root: Path) -> None:
+    if any(child_path(root, name).exists() for name in ("live.json", "ledger.sqlite3", "imported-baseline.json")):
+        raise WorkspaceError("Research is already configured or initialized; its approved setup cannot be replaced")
+
+
+def resume_preparation(root: Path) -> None:
+    """Caller holds RunLock. Finish only a journaled, pre-run source publication."""
+    pending = child_path(root, "preparation.pending.json")
+    if not pending.exists():
+        return
+    require_draft(root)
+    record = read_json(pending)
+    revision = child_path(root, "preparation-history", record["revision"])
+    previous, next_root = child_path(revision, "previous"), child_path(revision, "next")
+    names = record["previous_files"]
+    allowed = {"repository", "workspace.json", "settings.json", "evaluation.json"}
+    if not isinstance(names, list) or set(names) - allowed or len(names) != len(set(names)):
+        raise WorkspaceError("Invalid preparation recovery record")
+    if record["phase"] == "archive":
+        for name in names:
+            current, archived = child_path(root, name), child_path(previous, name)
+            if current.exists() and not archived.exists():
+                current.rename(archived)
+            elif current.exists() or not archived.exists():
+                raise WorkspaceError("Preparation source changed during archival; retained copies need inspection")
+        record["phase"] = "publish"
+        atomic_bytes(pending, json.dumps(record).encode())
+    if record["phase"] != "publish":
+        raise WorkspaceError("Unknown preparation recovery phase")
+    for name in ("repository", "workspace.json"):
+        source, current = child_path(next_root, name), child_path(root, name)
+        if source.exists() and not current.exists():
+            source.rename(current)
+        elif source.exists() or not current.exists():
+            raise WorkspaceError("Preparation destination changed; retained copies need inspection")
+    saved = prepared_workspace(root, child_path(root, "repository"))
+    if saved is None or saved["contract_sha256"] != record["contract_sha256"]:
+        raise WorkspaceError("Published setup differs from the reviewed preparation")
+    pending.rename(child_path(revision, "publication.json"))
+
+
+def publish_preparation(root: Path, staged_root: Path, expected: dict) -> None:
+    """Keep the complete previous source and Git history; never reset either tree."""
+    require_draft(root)
+    if prepared_workspace(root, child_path(root, "repository")) != expected:
+        raise WorkspaceError("Prepared source changed while reviewing the new setup")
+    staged = prepared_workspace(staged_root, child_path(staged_root, "repository"))
+    if staged is None:
+        raise WorkspaceError("The revised source has not passed preparation")
+    history = child_path(root, "preparation-history")
+    history.mkdir(exist_ok=True)
+    revision = child_path(history, uuid.uuid4().hex)
+    revision.mkdir()
+    child_path(revision, "previous").mkdir()
+    destination = child_path(revision, "next")
+    # Both paths have been resolved inside the app-owned project before moving.
+    staged_root = child_path(root, staged_root.relative_to(root).as_posix())
+    staged_root.rename(destination)
+    names = [name for name in ("repository", "workspace.json", "settings.json", "evaluation.json")
+             if child_path(root, name).exists()]
+    record = {"revision": revision.name, "phase": "archive", "previous_files": names,
+              "contract_sha256": staged["contract_sha256"]}
+    atomic_bytes(child_path(root, "preparation.pending.json"), json.dumps(record).encode())
+    resume_preparation(root)
 
 
 def contract_digest(repository: Path) -> str:

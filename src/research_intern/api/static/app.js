@@ -31,10 +31,24 @@ function controls() {
   $("upload").disabled = locked || !project.upload_available;
   $("prepare-project").disabled = locked || !project.prepare_available;
   $("confirm-evaluation").disabled = locked || !project.workspace_prepared || project.evaluation_status !== "unconfirmed";
-  $("budget-fields").disabled = locked || project.status !== "contract_valid";
+  $("budget-fields").disabled = locked || (project.status !== "contract_valid" && !snapshot.onboarding?.analysis) || Boolean(snapshot.live?.configured);
   $("save-budget").disabled = !dirtyBudget && project.budget_saved;
   $("start").disabled = locked || dirtyBudget || !project.budget_saved || !snapshot.can_start;
-  const pending = run?.experiments.some(r => ["SUBMITTING", "SUBMITTED", "RUNNING"].includes(r.state));
+  for (const provider of ["azure", "copilot"]) {
+    const connection = snapshot.connections?.[provider];
+    $(provider + "-signin").disabled = locked;
+    $(provider + "-cancel").disabled = busy || !online;
+    $(provider + "-cancel").hidden = !["connecting", "waiting", "checking"].includes(connection?.status);
+  }
+  $("copilot-host").disabled = locked;
+  $("copilot-save-model").disabled = locked || !$("copilot-model").value || Boolean(snapshot.connections?.copilot.model_locked);
+  $("copilot-model").disabled = locked || Boolean(snapshot.connections?.copilot.model_locked);
+  $("measure-baseline").hidden = !snapshot.can_measure_baseline;
+  $("measure-baseline").disabled = locked;
+  $("verify-live").hidden = !snapshot.live?.configured || snapshot.live?.services_verified;
+  $("verify-live").disabled = locked;
+  $("export-report").hidden = !run;
+  const pending = run?.experiments.some(r => ["PREPARED", "SUBMITTING", "SUBMITTED", "RUNNING"].includes(r.state));
   const interrupted = run && (["INTERRUPTED", "RECOVERY_REQUIRED", "RUNNING", "PAUSED"].includes(run.controller.state) || run.driver.error);
   const humanStop = Boolean(run?.research_state.blocking_reasons.includes("HUMAN_STOP"));
   const canResume = Boolean(run && !active && (pending || (interrupted && !humanStop)));
@@ -43,34 +57,41 @@ function controls() {
   $("resume").textContent = pending ? "Resume collection" : "Resume saved loop";
   $("stop").hidden = !(active || canResume);
   $("stop").disabled = busy || !online || Boolean(run?.research_state.blocking_reasons.includes("HUMAN_STOP"));
+  onboardingControls(locked);
 }
 function render(data) {
   snapshot = data;
+  renderConnections(data.connections);
   const project = data.project, run = data.run;
   $("project-name").textContent = project.status === "missing" ? "Your next research project" : project.name;
   $("project-message").textContent = project.message;
-  badge($("project-state"), project.workspace_prepared ? "Workspace prepared" : {missing: "Not loaded", needs_contract: "Needs contract", contract_valid: "Source checked", needs_attention: "Needs attention"}[project.status], project.status === "contract_valid" ? "good" : ["needs_attention", "needs_contract"].includes(project.status) ? "warn" : "");
+  badge($("project-state"), project.workspace_prepared ? "Workspace prepared" : {missing: "Not loaded", needs_contract: "Review project", contract_valid: "Source checked", needs_attention: "Needs attention"}[project.status], project.status === "contract_valid" ? "good" : ["needs_attention", "needs_contract"].includes(project.status) ? "warn" : "");
   $("upload").hidden = !project.upload_available;
   $("upload-note").hidden = !project.upload_available;
   $("objective").hidden = !project.objective;
   if (project.objective) $("objective").textContent = `${project.objective.direction === "maximize" ? "Maximize" : "Minimize"} ${project.objective.metric}`;
   $("prepare-project").hidden = !project.prepare_available;
   $("source-version").hidden = !project.source_commit;
-  $("source-version").textContent = project.source_commit ? `Source version: ${project.source_commit}. Setup only; EXP-000 has not been imported.` : "";
+  $("source-version").textContent = project.source_commit ? `Baseline source: ${project.source_commit}. ${data.live?.baseline_accepted ? "Measured baseline accepted." : "Baseline measurement required."}` : "";
+  $("live-setup").hidden = !project.workspace_prepared;
+  badge($("live-state"), data.live?.configured ? "Configured" : "Not configured");
+  $("live-message").textContent = data.live?.error || (data.live?.baseline_accepted ? "Baseline accepted. Start loop runs bounded candidate experiments." : data.live?.configured ? "Measure the baseline first. This submits an Azure job and runs the reviewed scorer." : "Prepare research using your project, accounts and Azure selections above.");
   renderEvaluation(project);
   const nextKey = JSON.stringify([project.contract_sha256, project.budget]);
   if (!dirtyBudget || (budgetKey !== null && project.contract_sha256 !== JSON.parse(budgetKey)[0])) {
-    $("gpu-hours").value = project.budget?.max_gpu_hours ?? "";
-    $("experiment-limit").value = project.budget?.max_experiments ?? "";
-    $("ai-credits").value = project.budget?.max_ai_credits ?? "";
+    const limits = project.budget || data.onboarding?.budget;
+    $("gpu-hours").value = limits?.max_gpu_hours ?? "";
+    $("experiment-limit").value = limits?.max_experiments ?? "";
+    $("ai-credits").value = limits?.max_ai_credits ?? "";
     dirtyBudget = false;
     budgetKey = nextKey;
   }
   $("budget-status").textContent = dirtyBudget ? "Unsaved changes" : project.budget_saved ? "Draft limits saved" : "Set before starting";
-  $("budget-note").textContent = project.status !== "contract_valid" ? "A valid project contract is required." : "Draft limits only. Live compute and credit limits are not enforced yet.";
-  $("usage").textContent = "Compute and credit usage: unavailable until live metering is connected.";
+  $("budget-note").textContent = data.live?.configured ? "Fixed run limits. Failed or interrupted requests retain their reservations." : project.status !== "contract_valid" ? "A valid project contract is required." : "Draft limits must match the prepared contract before live configuration.";
+  const usage = data.live?.usage;
+  $("usage").textContent = usage ? `Reserved: ${number(usage.azure.reserved / 3600)} GPU-h, ${usage.copilot.reserved} coding turns, ${number(usage.credits.reserved / 1000000)} AI credits. Actual billed usage may differ.` : "Service reservations appear after baseline initialization.";
   const readiness = data.readiness;
-  $("readiness").textContent = project.status === "missing" ? "Upload a project to begin setup. Live research execution is not connected yet." : project.status === "needs_attention" ? "Resolve the project issue above before starting." : readiness ? `Live execution is blocked by ${readiness.blockers.length} checks. Expand the checklist below for details.` : data.start_blocker;
+  $("readiness").textContent = project.status === "missing" ? "Upload a project to begin setup." : project.status === "needs_attention" ? "Resolve the project issue above before starting." : readiness?.can_start ? "Ready to start the research loop." : readiness ? `Complete ${readiness.blockers.length} setup checks. Expand the checklist below for details.` : data.start_blocker;
   $("readiness-details").hidden = !readiness;
   $("readiness-checks").replaceChildren(...(readiness?.checks || []).map(check => {
     const item = node("li"), label = node("span");
@@ -85,7 +106,41 @@ function render(data) {
     if (!run || run.id !== selectedRun) { $("experiment-dialog").close(); ++detailVersion; }
     else if (detailRevision !== run.research_state.ledger_revision) loadDetail(selectedExperiment);
   }
+  renderOnboarding(data.onboarding);
   controls();
+}
+function renderConnections(connections) {
+  if (!connections) return;
+  const labels = {signed_out: "Not connected", connecting: "Connecting", waiting: "Awaiting sign-in", checking: "Checking access", connected: "Connected", denied: "Access required", error: "Needs attention", cancelled: "Cancelled"};
+  for (const provider of ["azure", "copilot"]) {
+    const state = connections[provider];
+    if (!state) continue;
+    badge($(provider + "-status"), labels[state.status] || "Not connected", state.status === "connected" ? "good" : ["error", "denied"].includes(state.status) ? "warn" : "");
+    $(provider + "-message").textContent = state.message;
+    $(provider + "-signin").textContent = state.status === "connected" ? "Reconnect" : `Sign in to ${provider === "azure" ? "Azure" : "Copilot"}`;
+    $(provider + "-challenge").hidden = !state.authorization_url;
+    const link = $(provider + "-authorize");
+    if (state.authorization_url) link.href = state.authorization_url; else link.removeAttribute("href");
+    $(provider + "-code-label").hidden = !state.user_code;
+    $(provider + "-code").textContent = state.user_code || "";
+    $(provider + "-storage").textContent = state.status === "connected" && state.storage
+      ? (state.storage === "session"
+        ? "Connected for this app session. Sign in again after restarting the app."
+        : "Login is stored using your operating system credential manager.")
+      : "";
+  }
+  const copilot = connections.copilot, select = $("copilot-model");
+  if (!$("copilot-host").dataset.initialized) {
+    $("copilot-host").value = copilot.host || "";
+    $("copilot-host").dataset.initialized = "true";
+  }
+  $("copilot-model-field").hidden = copilot.status !== "connected" || !copilot.models?.length;
+  const signature = JSON.stringify([copilot.models, copilot.selected_model]);
+  if (select.dataset.models !== signature) {
+    select.replaceChildren(node("option", "Choose a model")); select.firstChild.value = "";
+    for (const model of copilot.models || []) { const option = node("option", model); option.value = model; select.append(option); }
+    select.value = copilot.selected_model || ""; select.dataset.models = signature;
+  }
 }
 function renderEvaluation(project) {
   $("evaluation-section").hidden = project.status === "missing";
@@ -93,8 +148,8 @@ function renderEvaluation(project) {
   badge($("evaluation-state"), confirmed ? "Confirmed" : "Not confirmed", confirmed ? "good" : "warn");
   $("evaluation-note").textContent = confirmed
     ? "Your evaluation policy is confirmed for this source version. This does not verify a measured baseline or enable live runs."
-    : !protocol ? "The metric and evaluation procedure still need researcher agreement. Add an evaluation section to the contract with the metric definition, dataset version, evaluator and fixed validation split before confirming."
-    : !project.workspace_prepared ? "Review this procedure and its constraints, then prepare the local workspace before confirming."
+    : !protocol ? "Select your objective metric, existing evaluation script and fixed validation reference in the project form above."
+    : !project.workspace_prepared ? "Review this procedure and its constraints, then choose Prepare research."
     : "Confirm only after reviewing the metric definition, data split, procedure and constraints with the researcher.";
   $("evaluation-details").hidden = !protocol;
   $("confirm-evaluation").hidden = !protocol || confirmed || !project.workspace_prepared;
@@ -151,9 +206,9 @@ function renderRun(run) {
     if (current) item.setAttribute("aria-current", "step"); else item.removeAttribute("aria-current");
   });
   $("history-kind").hidden = false;
-  $("history-kind").textContent = active ? "Active simulation" : "Saved simulation";
+  $("history-kind").textContent = run.mode === "live" ? "Measured research" : active ? "Active simulation" : "Saved simulation";
   $("history-note").hidden = false;
-  $("history-note").textContent = `Synthetic ${state.objective.metric} scores from an offline loop. These are not measurements of your ML project.`;
+  $("history-note").textContent = run.mode === "live" ? `Independently scored ${state.objective.metric}. Failed and rejected experiments remain in the history.` : `Synthetic ${state.objective.metric} scores from an offline loop. These are not measurements of your ML project.`;
   $("baseline").textContent = number(state.baseline?.score);
   $("best").textContent = number(state.best_experiment?.score);
   const improvement = changeText(state.best_experiment?.score, state.baseline?.score, state.objective.direction);
@@ -215,13 +270,13 @@ async function loadDetail(experimentId) {
     }
   } catch (exc) { if (version === detailVersion) $("detail-content").replaceChildren(node("p", exc.message, "detail-failure")); }
 }
-function uploadFolder(files) {
+function uploadFolder(files, archive = false) {
   return new Promise((resolve, reject) => {
     const form = new FormData();
-    for (const file of files) form.append("files", file, file.webkitRelativePath);
+    for (const file of files) form.append("files", file, archive ? file.name : file.webkitRelativePath);
     const request = new XMLHttpRequest();
-    request.open("POST", "/api/project/upload"); request.setRequestHeader("X-Research-Intern", "1");
-    request.timeout = 180000;
+    request.open("POST", `/api/onboarding/upload?archive=${archive}`); request.setRequestHeader("X-Research-Intern", "1");
+    request.timeout = 1800000;
     request.upload.onprogress = event => { $("upload-status").textContent = event.lengthComputable ? `Uploading ${Math.round(event.loaded / event.total * 100)}%…` : "Uploading source files…"; };
     request.onload = () => {
       let result;
@@ -241,12 +296,11 @@ $("upload").addEventListener("click", () => {
 $("folder-picker").addEventListener("change", async event => {
   // The controller creates independent Git metadata; never upload local history,
   // hooks or remote configuration from the researcher's original repository.
-  const files = Array.from(event.target.files).filter(file =>
-    !file.webkitRelativePath.split("/").slice(1).some(part => part.toLowerCase() === ".git"));
+  const files = Array.from(event.target.files).filter(file => !excludedProjectFile(file.webkitRelativePath));
   event.target.value = "";
   if (!files.length || busy) return;
   error();
-  if (files.length > 2000 || files.reduce((sum, file) => sum + file.size, 0) > 64 * 1024 * 1024) { error("Select a source folder up to 64 MiB and 2,000 files. Keep datasets, weights and environments separate."); return; }
+  if (files.length > 30000 || files.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 ** 3) { error("Retained project files exceed 2 GiB or 30,000 files. Use Azure data references for larger datasets."); return; }
   if (files.some(file => !file.webkitRelativePath)) { error("Select one folder with its relative file paths."); return; }
   busy = true; controls(); $("upload-status").textContent = "Uploading source files…";
   try { await uploadFolder(files); $("upload-status").textContent = "Folder copied. Review its setup status before preparing."; dirtyBudget = false; }
@@ -273,7 +327,8 @@ $("budget-form").addEventListener("submit", async event => {
   event.preventDefault(); if (busy || !snapshot) return;
   busy = true; controls(); error();
   try {
-    await api("/api/project/budget", {max_experiments: Number($("experiment-limit").value), max_gpu_hours: Number($("gpu-hours").value), max_ai_credits: Number($("ai-credits").value), contract_sha256: snapshot.project.contract_sha256});
+    if (snapshot.onboarding?.analysis && !snapshot.project.workspace_prepared) await saveProjectChoices();
+    else await api("/api/project/budget", {max_experiments: Number($("experiment-limit").value), max_gpu_hours: Number($("gpu-hours").value), max_ai_credits: Number($("ai-credits").value), contract_sha256: snapshot.project.contract_sha256});
     dirtyBudget = false; await refresh();
   } catch (exc) { error(exc.message); }
   finally { busy = false; controls(); }
@@ -288,6 +343,57 @@ async function action(kind) {
   finally { busy = false; controls(); }
 }
 $("start").addEventListener("click", () => action("start"));
+async function connectProvider(provider, cancel = false) {
+  if (busy) return;
+  busy = true; controls(); error();
+  try {
+    const host = $("copilot-host").value.trim();
+    const body = !cancel && provider === "copilot" && host ? {host} : {};
+    await api(`/api/connections/${provider}/${cancel ? "cancel" : "signin"}`, body);
+    await refresh();
+  } catch (exc) { error(exc.message); }
+  finally { busy = false; controls(); }
+}
+for (const provider of ["azure", "copilot"]) {
+  $(provider + "-signin").addEventListener("click", () => connectProvider(provider));
+  $(provider + "-cancel").addEventListener("click", () => connectProvider(provider, true));
+}
+$("azure-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("azure-code").textContent); $("azure-copy").textContent = "Copied"; }
+  catch { error("Select and copy the displayed one-time code."); }
+});
+$("copilot-model").addEventListener("change", controls);
+$("copilot-save-model").addEventListener("click", async () => {
+  if (busy) return;
+  busy = true; controls(); error();
+  try { await api("/api/connections/copilot/model", {model: $("copilot-model").value}); await refresh(); }
+  catch (exc) { error(exc.message); }
+  finally { busy = false; controls(); }
+});
+$("measure-baseline").addEventListener("click", async () => {
+  busy = true; controls(); error();
+  try {
+    if (snapshot.onboarding?.existing_run) await api("/api/onboarding/baseline-review", {compatible: $("existing-compatible").checked, output: $("existing-output").value.trim()});
+    await api("/api/project/baseline", {}); await refresh();
+  }
+  catch (e) { error(e.message); }
+  finally { busy = false; controls(); }
+});
+$("verify-live").addEventListener("click", async () => {
+  busy = true; controls(); error();
+  try { await api("/api/project/live/verify", {}); await refresh(); }
+  catch (e) { error(e.message); }
+  finally { busy = false; controls(); }
+});
+$("export-report").addEventListener("click", async () => {
+  if (!snapshot?.run) return;
+  try {
+    const report = await api(`/api/runs/${encodeURIComponent(snapshot.run.id)}/report`);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], {type:"application/json"}));
+    const link = node("a"); link.href = url; link.download = "research-report.json"; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) { error(e.message); }
+});
 $("stop").addEventListener("click", () => action("stop"));
 $("resume").addEventListener("click", () => action("resume"));
 $("experiments").addEventListener("click", event => { const button = event.target.closest("button[data-experiment]"); if (button) loadDetail(button.dataset.experiment); });
@@ -302,4 +408,5 @@ function connect() {
 }
 window.addEventListener("pagehide", () => stream?.close());
 window.addEventListener("pageshow", event => { if (event.persisted) connect(); });
+bindOnboarding();
 refresh().then(connect).catch(exc => { error(exc.message); $("connection").textContent = "Server unavailable"; connect(); });
